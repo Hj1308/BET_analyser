@@ -24,5 +24,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r BET_requirements.txt
 
+      - name: Test kinetics import
+        run: python -c "import kinetics; print('kinetics OK')"
+
       - name: Test bet_analysis import
         run: python -c "import bet_analysis; print('bet_analysis OK')"
