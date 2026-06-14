@@ -1,60 +1,102 @@
-# BET Analysis Tool
+# BET_analyser
 
-Python tool for BET/BJH analysis of physisorption data — auto-classifies isotherm type (I–VI) and hysteresis loop (H1–H4), verifies BET regression, and generates publication-ready figures directly from instrument XLS output.
+**Publication-Quality BET/BJH + T-Plot Analysis Tool**  
+Author: [Hoda Jafari](https://github.com/Hj1308) | MIT License
 
-## What it does
+---
 
-| Analysis | Output |
-|---|---|
-| Isotherm type (IUPAC Type I–VI) | Auto-classification + explanation |
-| Hysteresis type (IUPAC H1–H4) | Scoring system + confidence % |
-| BET plot verification | R², slope, intercept, Vm — matched to instrument point range |
-| BJH differential PSD | dVp/drp vs pore diameter (adsorption branch) |
-| Cumulative pore volume | Vp and surface area vs diameter |
-| BET vs BJH comparison | Surface area ratio and agreement note |
+## What this tool does
+
+Reads the XLS output from a BET instrument and computes:
+
+| Module | File | Description |
+|---|---|---|
+| **BET/BJH** | `bet_analysis.py` | Isotherm + hysteresis classification, BET regression, BJH pore size distribution, cumulative pore volume, 4-panel figure |
+| **T-Plot** | `tplot_analysis.py` | Harkins-Jura T-Plot: micropore volume, S_ext, pore type distribution (micro/meso/macro %), 2-panel figure |
+
+---
 
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/bet-analysis.git
-cd bet-analysis
-pip install -r requirements.txt
+git clone https://github.com/Hj1308/BET_analyser.git
+cd BET_analyser
+pip install -r BET_requirements.txt
 ```
+
+---
 
 ## Usage
 
+### BET + BJH (from XLS file)
+
 ```bash
-python bet_analysis.py --file YOUR_FILE.xls --sample "Sample Name"
+python bet_analysis.py --file C3N4.xls --sample "C3N4"
 ```
 
-Input: XLS file directly from BET instrument (tested with BELSORP).
-Output: `Sample_Name_BET_analysis.png` (300 dpi, publication-ready)
+### T-Plot (as module — recommended with bet_analysis.py)
 
-## Notes
+```python
+from bet_analysis import read_bet_xls
+from tplot_analysis import TPlotAnalyser
 
-- BJH analysis uses the **adsorption branch** (more reliable per IUPAC 2015 and Microtrac guidelines)
-- A cavitation artifact at ~3.4 nm is marked on the BJH plot — this is a physical phenomenon of N₂ at 77 K, not a real pore
-- BET regression uses the exact point range reported by the instrument (`Starting point` / `End point` in the XLS)
-- Hysteresis classification is based on a multi-feature scoring system (slope ratio, loop shape, plateau detection, closure point)
+data = read_bet_xls("C3N4.xls")
+s    = data["summary"]
 
-## Hysteresis Classification Logic
+tp = TPlotAnalyser(
+    pressure          = data["ads"][:, 0],
+    volume_adsorbed   = data["ads"][:, 1],
+    s_bet             = s["S_BET"],
+    total_pore_volume = s["Vp_total"]
+)
 
-| Feature | H1 | H2 | H3 | H4 |
-|---|---|---|---|---|
-| Slope ratio (des/ads) | ~1 | >2 | ~1 | ~1 |
-| Loop shape | narrow | triangular | wide | narrow |
-| Plateau on adsorption | yes | yes | no | no |
-| Flat at low p/p₀ | no | no | no | yes |
-| Pore structure | uniform cylinders | ink-bottle | slit/plate aggregates | slit + micropores |
-
-## Project Structure
-
-```
-bet-analysis/
-├── bet_analysis.py     # main script
-├── requirements.txt    # dependencies
-└── README.md
+tp.print_report(sample_name="C3N4")
+tp.plot_tplot(save_path="C3N4_tplot.png", sample_name="C3N4")
 ```
 
-## License
-MIT
+### T-Plot standalone (demo data)
+
+```bash
+python tplot_analysis.py --s-bet 95.3 --vtot 0.38 --sample "C3N4"
+```
+
+---
+
+## Output
+
+### BET analysis (`bet_analysis.py`)
+- 4-panel figure: Isotherm | BET plot | BJH PSD | Cumulative pore volume
+- Console report: surface area, pore volume, isotherm type, hysteresis type
+
+### T-Plot (`tplot_analysis.py`)
+- 2-panel figure: t-plot with linear fit | pore type distribution bar
+- Console report: S_BET, S_ext, S_micro, V_micro, V_meso, V_macro
+
+---
+
+## Isotherm & Hysteresis Classification
+
+| IUPAC Type | Pore Structure |
+|---|---|
+| Type I | Microporous (zeolites, activated carbon) |
+| Type II | Non-porous / macroporous |
+| Type III | Weak interaction, multilayer |
+| Type IV | Mesoporous + hysteresis |
+| Type V | Weak interaction + mesoporosity |
+| Type VI | Stepped, uniform non-porous surface |
+
+| Hysteresis | Pore Geometry |
+|---|---|
+| H1 | Uniform open cylinders |
+| H2 | Ink-bottle / pore blocking |
+| H3 | Slit-shaped (e.g. C₃N₄, clay) |
+| H4 | Micropore + slit-shaped |
+
+---
+
+## Related Repositories
+
+- [CatLab-Tools](https://github.com/Hj1308/CatLab-Tools) — Kinetics, TOF, TOC, unit conversion
+- [EISforge-](https://github.com/Hj1308/EISforge-) — EIS analysis + ML
+- [sem-particle-analyzer](https://github.com/Hj1308/sem-particle-analyzer) — SEM particle sizing
+- [Raman-analysis](https://github.com/Hj1308/Raman-analysis) — Raman spectroscopy toolkit
