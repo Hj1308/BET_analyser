@@ -551,6 +551,7 @@ def verify_bet(bet_pts: np.ndarray, summary: dict) -> dict:
         S_BET_calc=S_BET,
         S_BET_instrument=summary["S_BET"],
         C_valid=(C > 0),
+        all_pts=bet_pts,
     )
 
 
@@ -766,7 +767,7 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
             bar = "█" * v + "░" * (8 - v)
             print(f"    {k}  {bar}  {v}")
         print(f"\n  Feature Analysis:")
-        feat_rows = [[k, str(v)] for k, v in h["features"].items()]
+        feat_rows = [[k, ("✓" if v is True else "✗" if v is False else str(v))] for k, v in h["features"].items()]
         print(tabulate(feat_rows, headers=["Feature", "Value"],
                        tablefmt="simple"))
 
