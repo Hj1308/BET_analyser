@@ -1,5 +1,6 @@
 # BET_analyser 🔬
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21104234.svg)](https://doi.org/10.5281/zenodo.21104234)
 ![Version](https://img.shields.io/badge/version-v2.1.0-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=flat-square&logo=python)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -130,7 +131,7 @@ s    = data["summary"]
 
 # Isotherm classification
 iso  = classify_isotherm(data["ads"], data["des"])
-print(iso["type"], — iso["explanation"])
+print(iso["type"], iso["explanation"])
 
 # BET regression with IUPAC validity check
 bet  = verify_bet(data["bet_pts"], s)
@@ -189,6 +190,15 @@ BET_analyser/
 | [EISforge-](https://github.com/Hj1308/EISforge-) | EIS analysis + ML |
 | [sem-particle-analyzer](https://github.com/Hj1308/sem-particle-analyzer) | SEM particle sizing |
 | [Raman-analysis](https://github.com/Hj1308/Raman-analysis) | Raman spectroscopy toolkit |
+
+---
+
+## Cite This Software
+
+If you use BET_analyser in your research, please cite:
+
+> Jafari, H. (2026). *BET_analyser: Publication-Quality BET/BJH + T-Plot Analysis Tool* (v2.1.0). Zenodo.  
+> DOI: [10.5281/zenodo.21104234](https://doi.org/10.5281/zenodo.21104234)
 
 ---
 
