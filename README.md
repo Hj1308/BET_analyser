@@ -67,6 +67,7 @@ python tplot_analysis.py --s-bet 95.3 --vtot 0.38 --sample "C3N4"
 ### BET analysis (`bet_analysis.py`)
 - 4-panel figure: Isotherm | BET plot | BJH PSD | Cumulative pore volume
 - Console report: surface area, pore volume, isotherm type, hysteresis type
+- ⚠ Automatic warning if BET C constant is negative (IUPAC 2015 validity check)
 
 ### T-Plot (`tplot_analysis.py`)
 - 2-panel figure: t-plot with linear fit | pore type distribution bar
@@ -76,9 +77,12 @@ python tplot_analysis.py --s-bet 95.3 --vtot 0.38 --sample "C3N4"
 
 ## Isotherm & Hysteresis Classification
 
+Follows **IUPAC 2015** recommendations (Thommes et al., *Pure Appl. Chem.* **87**, 1051–1069).
+
 | IUPAC Type | Pore Structure |
 |---|---|
-| Type I | Microporous (zeolites, activated carbon) |
+| Type I(a) | Ultra-micropores < 1 nm (zeolites, activated carbons — very sharp knee at p/p₀ < 0.01) |
+| Type I(b) | Micropores 1–2.5 nm (MOFs, hierarchical carbons — knee extends to ~0.1) |
 | Type II | Non-porous / macroporous |
 | Type III | Weak interaction, multilayer |
 | Type IV | Mesoporous + hysteresis |
@@ -91,6 +95,27 @@ python tplot_analysis.py --s-bet 95.3 --vtot 0.38 --sample "C3N4"
 | H2 | Ink-bottle / pore blocking |
 | H3 | Slit-shaped (e.g. C₃N₄, clay) |
 | H4 | Micropore + slit-shaped |
+
+---
+
+## Physical Constants (N₂ at 77 K)
+
+All magic numbers are defined as named constants at the top of `bet_analysis.py`:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `N2_BET_FACTOR` | 4.353 m² g⁻¹ per cm³(STP) g⁻¹ | Cross-sectional area σ = 0.162 nm² |
+| `N2_TPLOT_SLOPE_FACTOR` | 15.47 m² g⁻¹ per cm³/(g·Å) | Harkins-Jura conversion |
+| `N2_LIQUID_FACTOR` | 1547.0 cm³(STP) per cm³(liquid N₂) | At 77 K |
+| `N2_CAVITATION_NM` | 3.4 nm | Forced closure diameter for N₂ at 77 K |
+
+---
+
+## IUPAC 2015 Validity Checks
+
+- **BET C constant**: A `UserWarning` is raised if C < 0, indicating the selected p/p₀ range is outside the valid BET region. Adjust `start_pt`/`end_pt` so that 0.05 ≤ p/p₀ ≤ 0.35.
+- **Monotonicity**: A warning is raised if BET linearisation y-values are not strictly increasing over the selected range.
+- **BJH branch**: Surface area and pore size distribution are computed from the **adsorption branch** to avoid the ~3.4 nm N₂ cavitation artefact present in desorption BJH at 77 K.
 
 ---
 
