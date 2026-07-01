@@ -1,4 +1,0 @@
-# System-level packages required by Streamlit Cloud (Ubuntu apt)
-# xlrd is pure Python so no apt package needed.
-# Uncomment if needed:
-# libgomp1
