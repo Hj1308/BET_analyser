@@ -736,21 +736,25 @@ with tab_tplot:
                 s_bet             = s["S_BET"],
                 total_pore_volume = s["Vp_total"],
             )
+            res = tp.full_tplot_report()
             col_t1, col_t2 = st.columns([1, 2])
             with col_t1:
-                res = tp.results
                 st.markdown("**T-Plot Results**")
                 st.table(pd.DataFrame({
                     "Parameter": ["S_BET", "S_ext", "S_micro", "V_micro", "V_meso"],
                     "Value": [
-                        f"{res.get('S_BET', float('nan')):.2f}",
-                        f"{res.get('S_ext', float('nan')):.2f}",
-                        f"{res.get('S_micro', float('nan')):.2f}",
-                        f"{res.get('V_micro', float('nan')):.4f}",
-                        f"{res.get('V_meso', float('nan')):.4f}",
+                        f"{res['S_BET_m2g']:.2f}",
+                        f"{res['S_ext_m2g']:.2f}",
+                        f"{res['S_micro_m2g']:.2f}",
+                        f"{res['V_micro_cm3g']:.4f}",
+                        f"{res['V_meso_cm3g']:.4f}",
                     ],
                     "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "cm³ g⁻¹", "cm³ g⁻¹"],
                 }))
+                st.caption(
+                    f"Fit range: {res['t_range'][0]}–{res['t_range'][1]} Å "
+                    f"({res['n_points']} pts) · R² = {res['R2_tplot']:.5f}"
+                )
             with col_t2:
                 buf = io.BytesIO()
                 tp.plot_tplot(save_path=buf, sample_name=sample_name)
