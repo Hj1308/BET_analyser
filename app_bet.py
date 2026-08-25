@@ -730,13 +730,51 @@ with tab_tplot:
         st.subheader("T-Plot Micropore Analysis")
         try:
             from tplot_analysis import TPlotAnalyser
+
+            # ── S_BET source for the decomposition ────────────────────────────
+            s_bet_tplot = s["S_BET"]
+            sbet_source = "instrument"
+            if (use_rouquerol and rouquerol_result is not None
+                    and rouquerol_result["best"] is not None):
+                use_rq_sbet = st.checkbox(
+                    "Use Rouquerol S_BET for T-Plot decomposition",
+                    value=True,
+                    help=("S_micro = S_BET − S_ext is sensitive to the BET value. "
+                          "Using the Rouquerol-consistent S_BET keeps all reported "
+                          "numbers internally consistent."),
+                )
+                if use_rq_sbet:
+                    s_bet_tplot = rouquerol_result["best"].S_BET
+                    sbet_source = "Rouquerol"
+
             tp = TPlotAnalyser(
                 pressure          = data["ads"][:, 0],
                 volume_adsorbed   = data["ads"][:, 1],
-                s_bet             = s["S_BET"],
+                s_bet             = s_bet_tplot,
                 total_pore_volume = s["Vp_total"],
             )
             res = tp.full_tplot_report()
+
+            # ── Consistency warnings ──────────────────────────────────────────
+            if res["n_points"] < 5:
+                st.warning(
+                    f"⚠ T-Plot fit uses only **{res['n_points']} points** in the "
+                    f"{res['t_range'][0]}–{res['t_range'][1]} Å window — R² is not "
+                    "meaningful with fewer than ~5 points. For publication, measure "
+                    "more points in p/p₀ ≈ 0.08–0.30."
+                )
+            if res["S_ext_m2g"] > res["S_BET_m2g"]:
+                over_pct = ((res["S_ext_m2g"] - res["S_BET_m2g"])
+                            / res["S_BET_m2g"] * 100)
+                st.warning(
+                    f"⚠ S_ext ({res['S_ext_m2g']:.2f} m² g⁻¹) exceeds S_BET "
+                    f"({res['S_BET_m2g']:.2f} m² g⁻¹) by {over_pct:.1f}%. "
+                    "This is within the combined BET + t-plot uncertainty — "
+                    "interpret as **no detectable microporosity**, not as a precise "
+                    "decomposition. (The Harkins–Jura reference curve can "
+                    "overestimate film thickness on polar surfaces.)"
+                )
+
             col_t1, col_t2 = st.columns([1, 2])
             with col_t1:
                 st.markdown("**T-Plot Results**")
@@ -752,6 +790,7 @@ with tab_tplot:
                     "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "cm³ g⁻¹", "cm³ g⁻¹"],
                 }))
                 st.caption(
+                    f"S_BET source: **{sbet_source}** · "
                     f"Fit range: {res['t_range'][0]}–{res['t_range'][1]} Å "
                     f"({res['n_points']} pts) · R² = {res['R2_tplot']:.5f}"
                 )
