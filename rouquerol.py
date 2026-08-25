@@ -19,6 +19,13 @@ Four criteria (IUPAC Technical Report, Thommes et al. 2015):
   4. The theoretical monolayer pressure 1/(√C + 1) agrees with the
      experimental p(nm) within a relative tolerance (default 20 %).
 
+Selection rule (v2): the four criteria are necessary but not always
+sufficient — on Type IV isotherms with capillary condensation, a wide
+window can pass all four while the BET plot is visibly curved
+(R² ≈ 0.92) and S_BET is overestimated by ~30 %. Therefore, among
+Rouquerol-valid windows only those with R² ≥ 0.999 are kept, and the
+largest of these (then highest R²) is selected.
+
 References
 ----------
 Rouquerol, J.; Llewellyn, P.; Rouquerol, F. Stud. Surf. Sci. Catal.
@@ -47,6 +54,7 @@ from scipy.stats import linregress
 N2_BET_FACTOR = 4.353
 MIN_POINTS_DEFAULT = 4
 CRITERION4_TOL_DEFAULT = 0.20
+R2_THRESHOLD_DEFAULT = 0.999
 
 
 def rouquerol_transform(p_rel: np.ndarray, n: np.ndarray) -> np.ndarray:
@@ -235,13 +243,19 @@ def select_bet_range(
     *,
     min_points: int = MIN_POINTS_DEFAULT,
     criterion4_tol: float = CRITERION4_TOL_DEFAULT,
+    r2_threshold: float = R2_THRESHOLD_DEFAULT,
     restrict_to_increasing: bool = True,
 ) -> dict:
     """Enumerate contiguous windows and pick the best Rouquerol-valid range.
 
-    Selection among valid windows (BETSI-inspired, not BETSI):
-      1. maximum number of points
-      2. then highest R²
+    Selection (v2):
+      1. keep windows passing all four Rouquerol criteria
+      2. of those, keep only windows with R² ≥ r2_threshold (linearity)
+      3. pick the window with the most points, then highest R²
+
+    Step 2 is essential on Type IV isotherms: capillary condensation can
+    let a wide window pass all four criteria while the BET plot is curved
+    (R² ≈ 0.9), overestimating S_BET by tens of percent.
 
     Parameters
     ----------
@@ -283,8 +297,9 @@ def select_bet_range(
                 candidates.append(win)
 
     valid = [c for c in candidates if c.valid]
-    pool = valid if valid else candidates
-    pool.sort(key=lambda c: (c.valid, c.n_points, c.R2), reverse=True)
+    linear = [c for c in valid if c.R2 >= r2_threshold]
+    pool = linear if linear else (valid if valid else candidates)
+    pool.sort(key=lambda c: (c.n_points, c.R2), reverse=True)
     best = pool[0] if pool else None
 
     return {
@@ -292,10 +307,14 @@ def select_bet_range(
         "valid_windows": valid,
         "n_candidates": len(candidates),
         "n_valid": len(valid),
+        "n_linear": len(linear),
+        "r2_threshold": r2_threshold,
         "p_sorted": p_s,
         "n_sorted": n_s,
         "rouquerol_transform": t_full,
-        "selection_rule": "max n_points, then max R2, among Rouquerol-valid windows",
+        "selection_rule": (
+            f"Rouquerol-valid + R²≥{r2_threshold}, then max points, then max R²"
+        ),
     }
 
 

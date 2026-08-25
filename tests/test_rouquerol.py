@@ -67,3 +67,24 @@ def test_too_few_points_returns_none_best_only_if_empty():
     n = np.array([1.0, 1.2, 1.4])
     result = select_bet_range(p, n, min_points=4)
     assert result["best"] is None or result["n_candidates"] == 0
+
+
+def test_noisy_type_iv_isotherm_recovers_surface_area():
+    """Type IV with capillary condensation: the linearity filter must reject
+    the full-range window, which passes all four Rouquerol criteria but has
+    R² ≈ 0.92 and overestimates S_BET by ~30 %."""
+    rng = np.random.default_rng(42)
+    C_true, Vm_true = 120.0, 22.0
+    p = np.array([0.01, 0.03, 0.05, 0.07, 0.10, 0.13, 0.16, 0.20, 0.24, 0.28,
+                  0.32, 0.36, 0.42, 0.48, 0.55, 0.62, 0.70, 0.80, 0.90, 0.99])
+    theta = C_true * p / ((1.0 - p) * (1.0 + (C_true - 1.0) * p))
+    n = Vm_true * theta
+    n = n * (1.0 + 0.6 * np.clip((p - 0.45) / 0.5, 0, 1) ** 2)
+    n = n * (1.0 + rng.normal(0, 0.003, len(p)))
+
+    result = select_bet_range(p, n)
+    best = result["best"]
+    S_true = Vm_true * N2_BET_FACTOR
+    assert best is not None and best.valid
+    assert best.R2 >= 0.999
+    assert abs(best.S_BET - S_true) / S_true < 0.05
