@@ -273,6 +273,26 @@ def _plot_rouquerol_transform(p_rel, n, best_window) -> plt.Figure:
     return fig
 
 
+def _match_instrument_window_by_pressure(p_ads, n_ads, bet_pts,
+                                         start_pt, end_pt):
+    """
+    Evaluate the instrument's BET point range on the adsorption branch.
+
+    start_pt/end_pt are row indices into the instrument's BET sheet, which
+    is usually a subset of the adsorption points — so they cannot be used
+    as indices into p_ads directly. Instead we take the instrument's p/p₀
+    window and select the adsorption-branch points that fall inside it,
+    then run the Rouquerol consistency check on that window.
+    """
+    inst_p = bet_pts[start_pt:end_pt + 1, 0]
+    p_lo, p_hi = float(np.min(inst_p)), float(np.max(inst_p))
+    mask = (p_ads >= p_lo - 1e-9) & (p_ads <= p_hi + 1e-9)
+    idx = np.where(mask)[0]
+    if len(idx) < 4:
+        return None
+    return diagnose_instrument_range(p_ads, n_ads, int(idx[0]), int(idx[-1]))
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ════════════════════════════════════════════════════════════════════════════
@@ -390,8 +410,8 @@ if use_rouquerol:
     with st.spinner("Running Rouquerol range selection…"):
         rouquerol_result = select_bet_range(p_ads, n_ads)
         try:
-            instrument_window = diagnose_instrument_range(
-                p_ads, n_ads, s["start_pt"], s["end_pt"]
+            instrument_window = _match_instrument_window_by_pressure(
+                p_ads, n_ads, data["bet_pts"], s["start_pt"], s["end_pt"]
             )
         except Exception:
             instrument_window = None
@@ -495,7 +515,7 @@ with tab_overview:
                     f"S_BET = {best.S_BET:.3f} m² g⁻¹ | C = {best.C:.2f} | R² = {best.R2:.6f}"
                 )
 
-            # Compare with instrument range
+            # Compare with instrument range (matched by p/p₀, not sheet indices)
             if instrument_window is not None:
                 diff_pct = abs(best.S_BET - instrument_window.S_BET) / instrument_window.S_BET * 100
                 if diff_pct > 5:
@@ -614,7 +634,7 @@ with tab_rouquerol:
 
             if instrument_window is not None:
                 st.divider()
-                st.markdown("**Instrument Range vs Rouquerol**")
+                st.markdown("**Instrument Range vs Rouquerol** (matched by p/p₀)")
                 comp_df = pd.DataFrame({
                     "Source": ["Instrument", "Rouquerol"],
                     "p/p₀ range": [

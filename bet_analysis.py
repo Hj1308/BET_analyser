@@ -1,16 +1,17 @@
 """
 BET Analysis Tool — Publication-Quality Figures
 ================================================
-Reads instrument XLS output and computes:
+Reads instrument XLS/XLSX output and computes:
   - Isotherm type classification  (IUPAC Type I–VI, including I(a)/I(b))
   - Hysteresis type classification (IUPAC H1–H4)
   - BET plot with regression verification
+  - Rouquerol auto BET range selection (IUPAC 2015 / ISO 9277)
   - BJH differential pore size distribution
   - Cumulative pore volume
   - BET vs BJH surface area comparison
 
 Usage:
-    python bet_analysis.py --file C3N4.xls --sample "C3N4"
+    python bet_analysis.py --file C3N4.xls --sample "C3N4" --rouquerol
 
 Author  : Hoda Jafari | github.com/Hj1308
 License : MIT
@@ -18,7 +19,6 @@ License : MIT
 
 import argparse
 import warnings
-import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -95,9 +95,30 @@ C_SHADE = "#AACCE8"   # light blue fill
 # 1. DATA READING
 # ══════════════════════════════════════════════════════════════
 
+def _load_sheets(filepath: str) -> tuple:
+    """
+    Load all sheets from XLS or XLSX.
+
+    - .xls  : reads via the xlrd API directly (xls_reader module), bypassing
+              the pandas >= 2.0 engine guard that rejects xlrd 1.2.x.
+    - .xlsx : standard pandas path with openpyxl.
+
+    Returns (sheet_names, raw_dict) where raw_dict maps sheet name to a
+    header=None DataFrame.
+    """
+    if str(filepath).lower().endswith(".xls"):
+        from xls_reader import read_xls_sheets
+        return read_xls_sheets(filepath)
+    xl = pd.ExcelFile(filepath, engine="openpyxl")
+    raw = {sh: pd.read_excel(filepath, sheet_name=sh,
+                             engine="openpyxl", header=None)
+           for sh in xl.sheet_names}
+    return xl.sheet_names, raw
+
+
 def read_bet_xls(filepath: str) -> dict:
     """
-    Parse the XLS file produced by the BET instrument.
+    Parse the XLS/XLSX file produced by the BET instrument.
     Returns a dict with keys: ads, des, bet_pts, bjh, summary
 
     Raises
@@ -105,18 +126,15 @@ def read_bet_xls(filepath: str) -> dict:
     ValueError
         If expected sheet names or row labels are not found in the file.
     """
-    xl = pd.ExcelFile(filepath, engine="xlrd")
+    sheet_names, raw = _load_sheets(filepath)
+
     required_sheets = {"AdsDes", "BET", "BJH", "Summary"}
-    missing = required_sheets - set(xl.sheet_names)
+    missing = required_sheets - set(sheet_names)
     if missing:
         raise ValueError(
             f"Missing required sheet(s) in XLS file: {missing}. "
-            f"Found sheets: {xl.sheet_names}"
+            f"Found sheets: {sheet_names}"
         )
-
-    raw = {sh: pd.read_excel(filepath, sheet_name=sh,
-                             engine="xlrd", header=None)
-           for sh in xl.sheet_names}
 
     # ── Adsorption / Desorption isotherm ──────────────────────
     df = raw["AdsDes"]
@@ -373,7 +391,7 @@ def classify_hysteresis(ads: np.ndarray, des: np.ndarray) -> dict:
     hyst   = np.clip(Va_d_g - Va_a_g, 0, None)
 
     # ── Feature 1: hysteresis area (normalised) ────────────────
-    hyst_area = float(np.trapz(hyst, p_grid))
+    hyst_area = float(np.trapz(hyst, p_grid))   # compatible with NumPy < 2.0
     norm_area = hyst_area / (Va_a.max() + 1e-9)
 
     # ── Feature 2: slope ratio ─────────────────────────────────
@@ -509,6 +527,8 @@ def verify_bet(bet_pts: np.ndarray, summary: dict,
     - Va and Vm must be in cm³(STP)/g.
     - Valid BET range: 0.05 ≤ p/p₀ ≤ 0.35 (IUPAC 2015).
     - C constant must be positive; negative C indicates invalid range.
+    - If `ads` (the adsorption branch, columns p/p0 and Va) is given,
+      a Rouquerol auto range selection is run and attached to the result.
 
     Warns
     -----
@@ -651,8 +671,10 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
     _label_panel(ax, "B")
 
     # ── [C] BJH Differential PSD (adsorption branch) ─────────
+    # IUPAC note: adsorption BJH avoids the ~3.4 nm N₂ cavitation
+    # artefact that appears in desorption BJH at 77 K (p/p₀ ≈ 0.42).
     ax = axes[2]
-    rp   = bjh[:, 0] * 2
+    rp   = bjh[:, 0] * 2   # rp (nm) → diameter (nm); confirm instrument outputs rp not dp
     dVdr = bjh[:, 1]
 
     ax.plot(rp, dVdr, "-", color=C_BJH, lw=1.5)
@@ -807,7 +829,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="BET/BJH Analysis Tool — publication-quality figures")
     parser.add_argument("--file",   required=True,
-                        help="Path to BET instrument XLS file")
+                        help="Path to BET instrument XLS/XLSX file")
     parser.add_argument("--sample", default="Sample",
                         help="Sample name for plot title and file name")
     parser.add_argument("--no-show", action="store_true",
