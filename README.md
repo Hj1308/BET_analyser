@@ -1,6 +1,6 @@
 # BET_analyser 🔬
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22099631.svg)](https://doi.org/10.5281/zenodo.22099631)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22101160.svg)](https://doi.org/10.5281/zenodo.22101160)
 ![Version](https://img.shields.io/badge/version-v2.3.0-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=flat-square&logo=python)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -262,7 +262,7 @@ BET_analyser/
 If you use BET_analyser in your research, please cite:
 
 > Jafari, H. (2026). *BET_analyser: Publication-Quality BET/BJH + T-Plot Analysis Tool* (v2.3.0). Zenodo.  
-> DOI: [10.5281/zenodo.22099631](https://doi.org/10.5281/zenodo.22099631)
+> DOI: [10.5281/zenodo.22101160](https://doi.org/10.5281/zenodo.22101160)
 
 ---
 
