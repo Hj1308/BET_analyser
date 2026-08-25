@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bet-analyser"
+version = "2.3.0"
+description = "Publication-quality BET/BJH, t-plot, Rouquerol, and Langmuir adsorption analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Hoda Jafari" },
+]
+dynamic = ["dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/Hj1308/BET_analyser"
+Repository = "https://github.com/Hj1308/BET_analyser"
+Documentation = "https://github.com/Hj1308/BET_analyser#readme"
+"Zenodo DOI" = "https://doi.org/10.5281/zenodo.22101160"
+
+[tool.setuptools]
+py-modules = [
+  "app_bet",
+  "bet_analysis",
+  "langmuir",
+  "rouquerol",
+  "tplot_analysis",
+  "xls_reader",
+]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
