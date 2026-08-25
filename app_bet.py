@@ -293,13 +293,19 @@ def _plot_bet_heatmap(heatmap_result, best_window) -> plt.Figure:
                    origin="lower", interpolation="nearest")
 
     if best_window is not None:
-        p_lo = np.searchsorted(p, best_window.p_min)
-        p_hi = np.searchsorted(p, best_window.p_max)
-        if p_hi > p_lo:
-            rect = plt.Rectangle((p_lo, p_lo), p_hi - p_lo, p_hi - p_lo,
-                                 linewidth=2, edgecolor="blue",
-                                 facecolor="none", linestyle="--")
-            ax.add_patch(rect)
+        start_idx = int(np.argmin(np.abs(p - best_window.p_min)))
+        end_idx = int(np.argmin(np.abs(p - best_window.p_max)))
+
+        rect = plt.Rectangle(
+            (end_idx - 0.5, start_idx - 0.5),
+            1.0,
+            1.0,
+            linewidth=2.2,
+            edgecolor="blue",
+            facecolor="none",
+            linestyle="--",
+        )
+        ax.add_patch(rect)
 
     tick_step = max(1, N // 8)
     tick_pos = np.arange(0, N, tick_step)
@@ -693,6 +699,12 @@ with tab_rouquerol:
                 fig_hm = _plot_bet_heatmap(heatmap_result, best)
                 st.pyplot(fig_hm, use_container_width=True)
                 plt.close(fig_hm)
+                if heatmap_result["valid"].sum() <= 1:
+                    st.info(
+                        "Only one Rouquerol-valid window was found. "
+                        "The heatmap confirms a unique fit, but range sensitivity "
+                        "cannot be assessed from multiple valid windows."
+                    )
 
 
             if instrument_window is not None:
