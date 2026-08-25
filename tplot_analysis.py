@@ -29,6 +29,7 @@ License : MIT
 """
 
 import argparse
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import linregress
@@ -153,7 +154,19 @@ class TPlotAnalyser:
 
         slope, intercept, r, *_ = linregress(self.t[mask], self.v[mask])
         s_ext   = slope * N2_TPLOT_SLOPE_FACTOR
-        v_micro = max(intercept * N2_STP_TO_LIQUID, 0.0)
+        v_micro_raw = intercept * N2_STP_TO_LIQUID
+        v_micro = max(v_micro_raw, 0.0)
+        clamped = v_micro_raw < 0.0
+        if clamped:
+            warnings.warn(
+                f"t-plot intercept is negative ({intercept:.4f} cm³/g STP); "
+                "V_micro was clamped to 0. A negative intercept usually means "
+                "the reference t-curve does not match the sample's surface "
+                "chemistry, or the fitted window spans the micropore-filling "
+                "region.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         return {
             "S_ext_m2g"     : round(s_ext,   2),
@@ -161,9 +174,11 @@ class TPlotAnalyser:
             "R2_tplot"      : round(r ** 2,  5),
             "slope"         : round(slope,   5),
             "intercept"     : round(intercept, 5),
+            "intercept_raw" : round(intercept, 5),
             "t_range"       : (round(t_min, 2), round(t_max, 2)),
             "n_points"      : n_points,
             "low_confidence": n_points == 3,
+            "clamped"       : clamped,
         }
 
     # ──────────────────────────────────────────────────────────
@@ -208,13 +223,26 @@ class TPlotAnalyser:
 
         Returns
         -------
-        dict: S_micro_m2g, S_ext_m2g, S_BET_m2g
+        dict: S_micro_m2g, S_ext_m2g, S_BET_m2g, s_micro_raw, clamped
         """
-        s_micro = max(self.sbet - s_ext, 0.0)
+        s_micro_raw = self.sbet - s_ext
+        s_micro = max(s_micro_raw, 0.0)
+        clamped = s_micro_raw < 0.0
+        if clamped:
+            warnings.warn(
+                f"t-plot external surface area ({s_ext:.2f} m²/g) exceeds S_BET "
+                f"({self.sbet:.2f} m²/g); S_micro was clamped to 0. This usually "
+                "means the reference t-curve does not match the sample's surface "
+                "chemistry, or the fitted window spans the micropore-filling region.",
+                UserWarning,
+                stacklevel=2,
+            )
         return {
             "S_BET_m2g"   : round(self.sbet, 2),
             "S_ext_m2g"   : round(s_ext,     2),
             "S_micro_m2g" : round(s_micro,   2),
+            "s_micro_raw" : round(s_micro_raw, 2),
+            "clamped"     : clamped,
         }
 
     # ──────────────────────────────────────────────────────────
@@ -226,7 +254,9 @@ class TPlotAnalyser:
         fit  = self.fit_tplot(t_min, t_max)
         dist = self.pore_distribution(fit["V_micro_cm3g"])
         sa   = self.micropore_surface_area(fit["S_ext_m2g"])
-        return {**fit, **dist, **sa}
+        result = {**fit, **dist, **sa}
+        result["clamped"] = bool(fit.get("clamped")) or bool(sa.get("clamped"))
+        return result
 
     # ──────────────────────────────────────────────────────────
     # PRINT REPORT
