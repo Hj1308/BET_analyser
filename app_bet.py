@@ -506,13 +506,13 @@ with tab_overview:
                 st.success(
                     f"✓ **PASS** — Auto-selected range: p/p₀ = "
                     f"{best.p_min:.4f} – {best.p_max:.4f} ({best.n_points} points)  \n"
-                    f"S_BET = {best.S_BET:.3f} m² g⁻¹ | C = {best.C:.2f} | R² = {best.R2:.6f}"
+                    f"S_BET = {best.S_BET:.2f} ± {best.sigma_S_BET:.2f} m² g⁻¹ | C = {best.C:.1f} ± {best.sigma_C:.1f} | R² = {best.R2:.6f}"
                 )
             else:
                 st.warning(
                     f"⚠ **No fully consistent window found** — showing best compromise.  \n"
                     f"p/p₀ = {best.p_min:.4f} – {best.p_max:.4f} ({best.n_points} points)  \n"
-                    f"S_BET = {best.S_BET:.3f} m² g⁻¹ | C = {best.C:.2f} | R² = {best.R2:.6f}"
+                    f"S_BET = {best.S_BET:.2f} ± {best.sigma_S_BET:.2f} m² g⁻¹ | C = {best.C:.1f} ± {best.sigma_C:.1f} | R² = {best.R2:.6f}"
                 )
 
             # Compare with instrument range (matched by p/p₀, not sheet indices)
@@ -594,9 +594,9 @@ with tab_rouquerol:
                         f"{best.p_min:.4f}",
                         f"{best.p_max:.4f}",
                         f"{best.n_points}",
-                        f"{best.S_BET:.3f} m² g⁻¹",
+                        f"{best.S_BET:.2f} ± {best.sigma_S_BET:.2f} m² g⁻¹",
                         f"{best.Vm:.4f} cm³(STP) g⁻¹",
-                        f"{best.C:.2f}",
+                        f"{best.C:.2f} ± {best.sigma_C:.2f}",
                         f"{best.R2:.6f}",
                     ],
                 }))
@@ -642,12 +642,12 @@ with tab_rouquerol:
                         f"{best.p_min:.4f} – {best.p_max:.4f}",
                     ],
                     "S_BET (m² g⁻¹)": [
-                        f"{instrument_window.S_BET:.3f}",
-                        f"{best.S_BET:.3f}",
+                        f"{instrument_window.S_BET:.2f} ± {instrument_window.sigma_S_BET:.2f}",
+                        f"{best.S_BET:.2f} ± {best.sigma_S_BET:.2f}",
                     ],
                     "C": [
-                        f"{instrument_window.C:.2f}",
-                        f"{best.C:.2f}",
+                        f"{instrument_window.C:.2f} ± {instrument_window.sigma_C:.2f}",
+                        f"{best.C:.2f} ± {best.sigma_C:.2f}",
                     ],
                     "R²": [
                         f"{instrument_window.R2:.6f}",
@@ -864,8 +864,8 @@ with tab_download:
         report_rows.extend([
             ["Rouquerol p/p0 min",  f"{best.p_min:.4f}"],
             ["Rouquerol p/p0 max",  f"{best.p_max:.4f}"],
-            ["Rouquerol S_BET",     f"{best.S_BET:.3f}"],
-            ["Rouquerol C",         f"{best.C:.2f}"],
+            ["Rouquerol S_BET",     f"{best.S_BET:.3f} ± {best.sigma_S_BET:.3f}"],
+            ["Rouquerol C",         f"{best.C:.2f} ± {best.sigma_C:.2f}"],
             ["Rouquerol R2",        f"{best.R2:.6f}"],
             ["Rouquerol valid",     str(best.valid)],
         ])

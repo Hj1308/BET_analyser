@@ -88,3 +88,26 @@ def test_noisy_type_iv_isotherm_recovers_surface_area():
     assert best is not None and best.valid
     assert best.R2 >= 0.999
     assert abs(best.S_BET - S_true) / S_true < 0.05
+
+
+def test_bet_uncertainty_propagation():
+    """σ(S_BET) and σ(C) come from the linregress standard errors via
+    first-order propagation: ~0 for a perfect fit, positive for noisy
+    data, reproducing σ_S = S_BET·√(σ_slope² + σ_intercept²)/(slope+intercept),
+    and bracketing the true surface area."""
+    p, n, C, Vm = _ideal_bet_isotherm()
+    fit = fit_bet_window(p, n)
+    assert fit["sigma_S_BET"] == pytest.approx(0.0, abs=1e-9)
+    assert fit["sigma_C"] == pytest.approx(0.0, abs=1e-9)
+
+    rng = np.random.default_rng(7)
+    n_noisy = n * (1.0 + rng.normal(0.0, 0.005, size=len(p)))
+    fit = fit_bet_window(p, n_noisy)
+    assert fit["sigma_slope"] > 0 and fit["sigma_intercept"] > 0
+    expected = (abs(fit["S_BET"])
+                * np.hypot(fit["sigma_slope"], fit["sigma_intercept"])
+                / abs(fit["slope"] + fit["intercept"]))
+    assert fit["sigma_S_BET"] == pytest.approx(expected, rel=1e-12)
+    assert fit["sigma_C"] > 0
+    S_true = Vm * N2_BET_FACTOR
+    assert abs(fit["S_BET"] - S_true) < 3.0 * fit["sigma_S_BET"]
