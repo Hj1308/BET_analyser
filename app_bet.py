@@ -922,20 +922,23 @@ with tab_bjh:
     st.subheader("BJH Pore Size Distribution")
 
     bjh = data["bjh"]
-    rp  = bjh[:, 0] * 2
-    dVdr = bjh[:, 1]; cum_Vp = bjh[:, 2]; cum_Sap = bjh[:, 3]
+    # Instrument headers verified as radius ("rp/nm") and per-radius
+    # differential ("dVp/drp"), so rp*2 = diameter and dV/dd = dV/dr / 2.
+    rp   = bjh[:, 0] * 2           # radius (nm) -> diameter (nm)
+    dVdd = bjh[:, 1] / 2.0         # dVp/drp -> dVp/ddp
+    cum_Vp = bjh[:, 2]; cum_Sap = bjh[:, 3]
 
     setup_plot_style()
     fig_bjh, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
 
-    ax1.plot(rp, dVdr, "-", color=C_BJH, lw=1.5)
-    ax1.fill_between(rp, dVdr, alpha=0.15, color=C_BJH)
-    pk = np.argmax(dVdr)
+    ax1.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
+    ax1.fill_between(rp, dVdd, alpha=0.15, color=C_BJH)
+    pk = np.argmax(dVdd)
     ax1.axvline(rp[pk], ls="--", lw=0.9, color=C_BJH, alpha=0.7)
-    ax1.text(rp[pk]+0.3, dVdr[pk]*0.9, f"{rp[pk]:.1f} nm", fontsize=8, color=C_BJH)
+    ax1.text(rp[pk]+0.3, dVdd[pk]*0.9, f"{rp[pk]:.1f} nm", fontsize=8, color=C_BJH)
     ax1.axvline(N2_CAVITATION_NM, ls=":", lw=0.8, color="0.6")
     ax1.set_xlabel("Pore Diameter (nm)")
-    ax1.set_ylabel(r"d$V_p$/d$r_p$ (cm³ g⁻¹ nm⁻¹)")
+    ax1.set_ylabel(r"d$V_p$/d$d_p$ (cm³ g⁻¹ nm⁻¹)")
     ax1.set_xlim(left=0); ax1.set_ylim(bottom=0)
     ax1.set_title("Differential PSD")
 

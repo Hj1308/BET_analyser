@@ -681,19 +681,21 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
     # IUPAC note: adsorption BJH avoids the ~3.4 nm N₂ cavitation
     # artefact that appears in desorption BJH at 77 K (p/p₀ ≈ 0.42).
     ax = axes[2]
-    rp   = bjh[:, 0] * 2   # rp (nm) → diameter (nm); confirm instrument outputs rp not dp
-    dVdr = bjh[:, 1]
+    # Instrument headers verified as radius ("rp/nm") and per-radius
+    # differential ("dVp/drp"), so rp*2 = diameter and dV/dd = dV/dr / 2.
+    rp    = bjh[:, 0] * 2          # radius (nm) -> diameter (nm)
+    dVdd  = bjh[:, 1] / 2.0        # dVp/drp -> dVp/ddp
 
-    ax.plot(rp, dVdr, "-", color=C_BJH, lw=1.5)
-    ax.fill_between(rp, dVdr, alpha=0.15, color=C_BJH)
+    ax.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
+    ax.fill_between(rp, dVdd, alpha=0.15, color=C_BJH)
 
-    peak_idx = np.argmax(dVdr)
+    peak_idx = np.argmax(dVdd)
     ax.axvline(rp[peak_idx], ls="--", lw=0.9, color=C_BJH, alpha=0.7)
-    ax.text(rp[peak_idx] + 0.5, dVdr[peak_idx] * 0.95,
+    ax.text(rp[peak_idx] + 0.5, dVdd[peak_idx] * 0.95,
             f"{rp[peak_idx]:.1f} nm", fontsize=8, color=C_BJH)
 
     ax.set_xlabel(r"Pore Diameter (nm)")
-    ax.set_ylabel(r"d$V_p$/d$r_p$  (cm$^3$ g$^{-1}$ nm$^{-1}$)")
+    ax.set_ylabel(r"d$V_p$/d$d_p$  (cm$^3$ g$^{-1}$ nm$^{-1}$)")
     ax.set_xlim(left=0)
     ax.set_ylim(bottom=0)
     ax.xaxis.set_minor_locator(AutoMinorLocator())
