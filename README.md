@@ -1,6 +1,6 @@
 # BET_analyser 🔬
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21104234.svg)](https://doi.org/10.5281/zenodo.21104234)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22099631.svg)](https://doi.org/10.5281/zenodo.22099631)
 ![Version](https://img.shields.io/badge/version-v2.2.0-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=flat-square&logo=python)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -223,7 +223,7 @@ BET_analyser/
 | Version | Key Changes |
 |---------|-------------|
 | **v2.2.0** | Rouquerol auto BET range selection (`rouquerol.py`) with 4 consistency criteria + multi-window scan; R²≥0.999 linearity filter; **BET uncertainty propagation** (σ(S_BET), σ(C) from linregress stderr); Rouquerol tab in Streamlit app; instrument range matched by p/p₀; adjustable T-Plot fit window; unit tests (8) + CI; .xls reading via `xls_reader` restored |
-| **v2.1.0** | IUPAC 2015 validity checks (C < 0 warning, monotonicity check); named physical constants; `np.trapz` compatibility fix for NumPy < 2.0; `setup_plot_style()` isolated to prevent import side-effects; Type I(a)/I(b) sub-classification; BJH adsorption branch noted in report |
+| **v2.2.0** | IUPAC 2015 validity checks (C < 0 warning, monotonicity check); named physical constants; `np.trapz` compatibility fix for NumPy < 2.0; `setup_plot_style()` isolated to prevent import side-effects; Type I(a)/I(b) sub-classification; BJH adsorption branch noted in report |
 | **v2.0.0** | T-Plot module (`tplot_analysis.py`); 6-feature hysteresis scoring (H1–H4); confidence level output; N₂ cavitation marker on BJH panel |
 | **v1.0.0** | Initial release: BET regression, BJH PSD, IUPAC isotherm classification, 4-panel figure |
 
@@ -245,7 +245,7 @@ BET_analyser/
 If you use BET_analyser in your research, please cite:
 
 > Jafari, H. (2026). *BET_analyser: Publication-Quality BET/BJH + T-Plot Analysis Tool* (v2.2.0). Zenodo.  
-> DOI: [10.5281/zenodo.21104234](https://doi.org/10.5281/zenodo.21104234)
+> DOI: [10.5281/zenodo.22099631](https://doi.org/10.5281/zenodo.22099631)
 
 ---
 
