@@ -259,19 +259,99 @@ def read_bet_xls(filepath: str) -> dict:
 # 2. ISOTHERM CLASSIFICATION
 # ══════════════════════════════════════════════════════════════
 
-def classify_isotherm(ads: np.ndarray, des: np.ndarray) -> dict:
+# Normalised loop-area threshold above which an adsorption/desorption branch
+# pair is treated as a genuine hysteresis loop. This is a heuristic, not a
+# physical law. On the audit samples the normalised area sits at:
+#   - 13BgOH.xls : 0.0125  (below -> no loop)
+#   - BC.xls     : 0.0221  (above -> loop)
+#   - g-OH.xls   : 0.0459  (well above -> loop)
+# A higher threshold is tempting (0.02 is a common first guess, and would
+# still separate BC/g-OH from 13BgOH), but it over-sweeps: the synthetic
+# Type IV (H1) fixture has a genuine loop with a normalised area of ~0.0134,
+# and 0.02 would push it out of the hysteresis branch and misclassify it as
+# Type VI. The chosen value therefore has to sit between 13BgOH (0.0125) and
+# that fixture (0.0134); the margin is narrow and should be revisited if the
+# normalisation changes. Moving the threshold to 0.025 would flip BC to "no
+# loop". Exposed as a keyword argument on classify_isotherm so it can be
+# overridden.
+HYSTERESIS_AREA_THRESHOLD = 0.013
+
+# Minimum number of desorption-branch points required before a loop can be
+# defined at all; a 1-2 point branch cannot close a loop.
+MIN_HYSTERESIS_POINTS = 3
+
+
+def hysteresis_loop(ads: np.ndarray, des: np.ndarray) -> dict:
+    """Interpolate both branches onto a common p/p0 grid and compute the loop.
+
+    The positive part of (desorption − adsorption) is integrated over the
+    p/p0 overlap of the two branches and normalised by the maximum adsorbed
+    amount. This is the single place the normalised loop area is computed;
+    both :func:`classify_isotherm` and :func:`classify_hysteresis` call it.
+
+    A desorption branch with fewer than ``MIN_HYSTERESIS_POINTS`` points, or
+    branches that do not overlap in p/p0, cannot define a loop; in both cases
+    ``norm_area`` is ``0.0`` and the interpolation arrays are ``None``.
+
+    Returns
+    -------
+    dict with keys ``norm_area``, and — when a loop is defined — ``p_grid``,
+    ``Va_a_g``, ``Va_d_g``, ``hyst``, ``p_lo``, ``p_hi``.
+    """
+    empty = {
+        "norm_area": 0.0,
+        "p_grid": None, "Va_a_g": None, "Va_d_g": None, "hyst": None,
+        "p_lo": None, "p_hi": None,
+    }
+    if len(des) < MIN_HYSTERESIS_POINTS:
+        return empty
+
+    pp0_a, Va_a = ads[:, 0], ads[:, 1]
+    pp0_d, Va_d = des[:, 0], des[:, 1]
+
+    sort_d = np.argsort(pp0_d)
+    pp0_d, Va_d = pp0_d[sort_d], Va_d[sort_d]
+
+    p_lo = max(pp0_a.min(), pp0_d.min())
+    p_hi = min(pp0_a.max(), pp0_d.max())
+    if p_hi <= p_lo:
+        return empty
+
+    p_grid = np.linspace(p_lo, p_hi, 200)
+    f_ads = interp1d(pp0_a, Va_a, bounds_error=False, fill_value="extrapolate")
+    f_des = interp1d(pp0_d, Va_d, bounds_error=False, fill_value="extrapolate")
+
+    Va_a_g = f_ads(p_grid)
+    Va_d_g = f_des(p_grid)
+    hyst = np.clip(Va_d_g - Va_a_g, 0, None)
+
+    hyst_area = float(_trapezoid(hyst, p_grid))
+    norm_area = hyst_area / (Va_a.max() + 1e-9)
+
+    return {
+        "norm_area": norm_area,
+        "p_grid": p_grid, "Va_a_g": Va_a_g, "Va_d_g": Va_d_g, "hyst": hyst,
+        "p_lo": p_lo, "p_hi": p_hi,
+    }
+
+
+def classify_isotherm(ads: np.ndarray, des: np.ndarray,
+                      hysteresis_threshold: float = HYSTERESIS_AREA_THRESHOLD) -> dict:
     """
     IUPAC 2015 physisorption isotherm classification.
     Ref: Thommes et al., Pure Appl. Chem. 87, 1051–1069 (2015).
 
     Strategy:
-      Step 1 — detect hysteresis (→ Type IV or V)
+      Step 1 — detect hysteresis via loop area (→ Type IV or V)
       Step 2 — examine low-p/p0 concavity (IV vs V)
       Step 3 — no hysteresis: shape analysis (I, II, III, VI)
       Step 4 — Type I sub-classification: I(a) vs I(b)
+
+    ``hysteresis_threshold`` is the minimum normalised loop area
+    (:func:`hysteresis_loop`) for a branch pair to count as a hysteresis loop.
     """
     pp0_a, Va_a = ads[:, 0], ads[:, 1]
-    has_hyst    = len(des) > 0
+    has_hyst    = hysteresis_loop(ads, des)["norm_area"] >= hysteresis_threshold
 
     # -- Concavity at low relative pressure ----------------------
     low_mask = pp0_a < 0.35
@@ -334,6 +414,10 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray) -> dict:
                            "Weak adsorbate–adsorbent interactions combined "
                            "with mesoporosity.")
     else:
+        # No hysteresis loop. Low-p/p0 concavity is what separates Type II
+        # (concave — strong adsorbate–adsorbent interaction) from Type III
+        # (convex — weak interaction); ``has_plateau`` must not be able to
+        # send a concave isotherm to Type III.
         if steep_init and has_plateau:
             if is_type_Ia:
                 iso_type = "Type I(a)"
@@ -345,15 +429,28 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray) -> dict:
                 explanation = ("Steep rise extending to p/p₀ ~ 0.1 — indicates "
                                "micropores in range 1–2.5 nm plus possibly narrow "
                                "mesopores. Common in MOFs and hierarchical carbons.")
-        elif concave_low and has_plateau:
+        elif concave_low:
+            # Type II = unrestricted monolayer–multilayer adsorption: uptake
+            # rises without limit as p/p0 -> 1, so a plateau is not required
+            # (a genuine Type II has none). ``concave_low and has_plateau``
+            # (without ``steep_init``) also lands here — that combination is
+            # still a strong-interaction multilayer isotherm, not Type III.
             iso_type = "Type II"
-            explanation = ("S-shaped (sigmoid) isotherm. Non-porous or "
-                           "macroporous material. Unrestricted mono- to "
-                           "multilayer adsorption.")
-        else:
+            explanation = ("Concave at low p/p₀ — strong adsorbate–adsorbent "
+                           "interaction. Non-porous or macroporous material "
+                           "with unrestricted mono- to multilayer adsorption.")
+        elif not concave_low:
             iso_type = "Type III"
             explanation = ("Convex throughout. Weak adsorbate–adsorbent "
                            "interactions, multilayer adsorption.")
+        else:
+            # Defensive fallback — should be unreachable (concave_low is a
+            # bool), but Type III is deliberately not the catch-all.
+            iso_type = "Unclassified"
+            explanation = (f"Shape could not be classified confidently "
+                           f"(concave_low={concave_low}, "
+                           f"has_plateau={has_plateau}, "
+                           f"steep_init={steep_init}).")
 
     return {"type": iso_type, "explanation": explanation,
             "has_hysteresis": has_hyst, "concave_low": concave_low,
@@ -375,30 +472,21 @@ def classify_hysteresis(ads: np.ndarray, des: np.ndarray) -> dict:
       H3 : no plateau, non-rigid slit-shaped       → plate aggregates
       H4 : nearly flat + narrow loop               → slit + micropores
     """
-    if len(des) == 0:
+    loop = hysteresis_loop(ads, des)
+    if loop["p_grid"] is None:
         return {"type": "None", "explanation": "No hysteresis detected.",
                 "scores": {}, "features": {}}
 
     pp0_a, Va_a = ads[:, 0], ads[:, 1]
-    pp0_d, Va_d = des[:, 0], des[:, 1]
 
-    sort_d = np.argsort(pp0_d)
-    pp0_d, Va_d = pp0_d[sort_d], Va_d[sort_d]
-
-    p_lo = max(pp0_a.min(), pp0_d.min())
-    p_hi = min(pp0_a.max(), pp0_d.max())
-    p_grid = np.linspace(p_lo, p_hi, 200)
-
-    f_ads = interp1d(pp0_a, Va_a, bounds_error=False, fill_value="extrapolate")
-    f_des = interp1d(pp0_d, Va_d, bounds_error=False, fill_value="extrapolate")
-
-    Va_a_g = f_ads(p_grid)
-    Va_d_g = f_des(p_grid)
-    hyst   = np.clip(Va_d_g - Va_a_g, 0, None)
+    p_grid = loop["p_grid"]
+    Va_a_g = loop["Va_a_g"]
+    Va_d_g = loop["Va_d_g"]
+    hyst   = loop["hyst"]
+    p_lo   = loop["p_lo"]
 
     # ── Feature 1: hysteresis area (normalised) ────────────────
-    hyst_area = float(_trapezoid(hyst, p_grid))
-    norm_area = hyst_area / (Va_a.max() + 1e-9)
+    norm_area = loop["norm_area"]
 
     # ── Feature 2: slope ratio ─────────────────────────────────
     ads_slopes  = np.abs(np.gradient(Va_a_g, p_grid))
