@@ -25,6 +25,12 @@ from bet_analysis import (
     setup_plot_style,
     C_ADS, C_DES, C_BET, C_BJH, C_CUM, N2_CAVITATION_NM,
 )
+from rouquerol import (
+    select_bet_range,
+    diagnose_instrument_range,
+    format_rouquerol_report,
+    rouquerol_transform,
+)
 
 # ════════════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
@@ -37,9 +43,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ════════════════════════════════════════════════════════════════════════════
+# CUSTOM CSS
+# ════════════════════════════════════════════════════════════════════════════
+
 st.markdown("""
 <style>
     .block-container { padding-top: 1.5rem; }
+    .stAlert { border-radius: 8px; }
     .metric-box {
         background: #f8f9fa;
         border: 1px solid #dee2e6;
@@ -72,6 +83,7 @@ def _make_csv_template() -> bytes:
         "#   4. Save as CSV (comma-separated).",
         "",
         "[ISOTHERM]",
+        "# Adsorption branch — at least 10 points recommended",
         "pp0_ads,Va_ads_cm3g",
         "0.050,5.10",
         "0.100,7.20",
@@ -87,6 +99,7 @@ def _make_csv_template() -> bytes:
         "0.900,58.00",
         "0.950,68.00",
         "",
+        "# Desorption branch — leave empty if no hysteresis",
         "pp0_des,Va_des_cm3g",
         "0.950,68.00",
         "0.900,62.00",
@@ -98,6 +111,8 @@ def _make_csv_template() -> bytes:
         "0.300,14.00",
         "",
         "[BET_POINTS]",
+        "# BET linearisation points: 1/[Va(p0/p-1)] vs p/p0",
+        "# Select 5-10 points in the range 0.05 <= p/p0 <= 0.35",
         "pp0,y_bet",
         "0.050,0.0095",
         "0.100,0.0132",
@@ -107,6 +122,7 @@ def _make_csv_template() -> bytes:
         "0.300,0.0278",
         "",
         "[SUMMARY]",
+        "# Instrument-reported summary values (from your report printout)",
         "parameter,value",
         "S_BET,95.30",
         "Vm,21.90",
@@ -118,7 +134,10 @@ def _make_csv_template() -> bytes:
         "rp_peak_BJH,4.00",
         "",
         "[BJH]",
-        "rp_nm,dVp_drp,cum_Vp,cum_Sap",
+        "# BJH pore size distribution (adsorption branch)",
+        "# rp_nm = pore radius, dVp_drp = differential pore volume,",
+        "# cum_Vp = cumulative pore volume, cum_Sap = cumulative surface area",
+        "rp_nm,dVp_drp,cum-Vp,cum-Sap",
         "1.50,0.0010,0.0010,0.50",
         "2.00,0.0050,0.0060,2.00",
         "2.50,0.0120,0.0180,4.50",
@@ -151,7 +170,7 @@ def _parse_csv_template(file_bytes: bytes) -> dict:
     required = {"ISOTHERM", "BET_POINTS", "SUMMARY", "BJH"}
     missing = required - set(sections)
     if missing:
-        raise ValueError(f"Missing sections: {missing}. Download a fresh template.")
+        raise ValueError(f"Missing sections in CSV template: {missing}.")
 
     def _read_section(key):
         return pd.read_csv(io.StringIO(sections[key]))
@@ -230,7 +249,26 @@ def _plot_isotherm(ads, des, iso_cls, hyst_cls) -> plt.Figure:
             va="top", ha="left", fontsize=9,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.7", lw=0.7))
 
-    ax.set_title("N\u2082 Adsorption\u2013Desorption Isotherm (77 K)", fontsize=11)
+    ax.set_title("N₂ Adsorption–Desorption Isotherm (77 K)", fontsize=11)
+    plt.tight_layout()
+    return fig
+
+
+def _plot_rouquerol_transform(p_rel, n, best_window) -> plt.Figure:
+    """Plot n(1−p/p0) vs p/p0 with the selected BET window highlighted."""
+    setup_plot_style()
+    fig, ax = plt.subplots(figsize=(5, 3.8))
+    t = rouquerol_transform(p_rel, n)
+    ax.plot(p_rel, t, "o-", color=C_ADS, ms=4, lw=1.4, label="n(1−p/p₀)")
+    if best_window is not None:
+        ax.axvspan(best_window.p_min, best_window.p_max,
+                   alpha=0.18, color=C_BET, label="Selected BET range")
+        ax.axvline(best_window.p_min, ls="--", lw=0.9, color=C_BET)
+        ax.axvline(best_window.p_max, ls="--", lw=0.9, color=C_BET)
+    ax.set_xlabel(r"$p/p_0$")
+    ax.set_ylabel(r"$n(1-p/p_0)$  (cm³ g⁻¹)")
+    ax.legend(fontsize=8)
+    ax.set_title("Rouquerol Transform", fontsize=10)
     plt.tight_layout()
     return fig
 
@@ -271,11 +309,16 @@ with st.sidebar:
     st.subheader("⚙️ Options")
     show_tplot    = st.checkbox("Show T-Plot analysis", value=True)
     show_features = st.checkbox("Show hysteresis feature table", value=True)
+    use_rouquerol = st.checkbox(
+        "Use Rouquerol auto BET range",
+        value=True,
+        help="Select BET linear range automatically using Rouquerol consistency criteria (IUPAC 2015).",
+    )
 
     st.divider()
     st.markdown(
         "**DOI:** [10.5281/zenodo.21104234](https://doi.org/10.5281/zenodo.21104234)  \n"
-        "MIT License \u00b7 [GitHub](https://github.com/Hj1308/BET_analyser)"
+        "MIT License · [GitHub](https://github.com/Hj1308/BET_analyser)"
     )
 
 
@@ -299,7 +342,8 @@ if uploaded is None:
         st.markdown("### 📊 What you get")
         st.markdown(
             "- IUPAC isotherm + hysteresis classification\n"
-            "- BET regression with R\u00b2 and C-constant check\n"
+            "- BET regression with R² and C-constant check\n"
+            "- Rouquerol auto BET range selection\n"
             "- BJH differential PSD\n"
             "- Cumulative pore volume vs surface area\n"
             "- T-Plot micropore analysis\n"
@@ -336,13 +380,29 @@ for w in caught_warnings:
 
 s = data["summary"]
 
+# ── Rouquerol auto range ────────────────────────────────────────────────────────────
+p_ads = data["ads"][:, 0]
+n_ads = data["ads"][:, 1]
+rouquerol_result = None
+instrument_window = None
+
+if use_rouquerol:
+    with st.spinner("Running Rouquerol range selection…"):
+        rouquerol_result = select_bet_range(p_ads, n_ads)
+        try:
+            instrument_window = diagnose_instrument_range(
+                p_ads, n_ads, s["start_pt"], s["end_pt"]
+            )
+        except Exception:
+            instrument_window = None
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # RESULTS TABS
 # ════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_bet, tab_bjh, tab_tplot, tab_download = st.tabs([
-    "📊 Overview", "📈 BET", "🔵 BJH / PSD", "🔬 T-Plot", "📥 Download"
+tab_overview, tab_bet, tab_rouquerol, tab_bjh, tab_tplot, tab_download = st.tabs([
+    "📊 Overview", "📈 BET", "🔬 Rouquerol", "🔵 BJH / PSD", "🔬 T-Plot", "📥 Download"
 ])
 
 
@@ -353,16 +413,15 @@ with tab_overview:
     # ─ KPI metrics row
     cols = st.columns(4)
     kpi = [
-        (f"{s['S_BET']:.2f}",   "m\u00b2 g\u207b\u00b9",  "BET Surface Area"),
-        (f"{s['Vp_total']:.4f}", "cm\u00b3 g\u207b\u00b9", "Total Pore Volume"),
-        (f"{s['dp_avg']:.1f}",   "nm",                     "Avg Pore Diameter"),
-        (f"{s['C']:.1f}",        "\u2014",                 "BET C Constant"),
+        (f"{s['S_BET']:.2f}",   "m² g⁻¹",  "BET Surface Area"),
+        (f"{s['Vp_total']:.4f}", "cm³ g⁻¹", "Total Pore Volume"),
+        (f"{s['dp_avg']:.1f}",   "nm",       "Avg Pore Diameter"),
+        (f"{s['C']:.1f}",        "—",        "BET C Constant"),
     ]
     for col, (val, unit, label) in zip(cols, kpi):
         with col:
             st.markdown(
-                f'<div class="metric-box">'
-                f'<div class="metric-label">{label}</div>'
+                f'<div class="metric-box"><div class="metric-label">{label}</div>'
                 f'<div class="metric-value">{val}</div>'
                 f'<div class="metric-unit">{unit}</div></div>',
                 unsafe_allow_html=True,
@@ -374,7 +433,7 @@ with tab_overview:
     col_plot, col_cls = st.columns([2, 1])
 
     with col_plot:
-        st.markdown("**N\u2082 Adsorption\u2013Desorption Isotherm**")
+        st.markdown("**N₂ Adsorption–Desorption Isotherm**")
         fig_iso = _plot_isotherm(data["ads"], data["des"], iso_cls, hyst_cls)
         st.pyplot(fig_iso, use_container_width=True)
         plt.close(fig_iso)
@@ -400,22 +459,56 @@ with tab_overview:
     # ─ Summary table
     st.markdown("**Summary Table**")
     df_out = pd.DataFrame([
-        ["BET Surface Area",      f"{s['S_BET']:.3f}",         "m\u00b2 g\u207b\u00b9"],
-        ["Vm (monolayer cap.)",    f"{s['Vm']:.4f}",            "cm\u00b3(STP) g\u207b\u00b9"],
-        ["BET C constant",         f"{s['C']:.2f}",             "\u2014"],
-        ["Total Pore Volume",      f"{s['Vp_total']:.4f}",      "cm\u00b3 g\u207b\u00b9"],
+        ["BET Surface Area",      f"{s['S_BET']:.3f}",         "m² g⁻¹"],
+        ["Vm (monolayer cap.)",    f"{s['Vm']:.4f}",            "cm³(STP) g⁻¹"],
+        ["BET C constant",         f"{s['C']:.2f}",             "—"],
+        ["Total Pore Volume",      f"{s['Vp_total']:.4f}",      "cm³ g⁻¹"],
         ["Average Pore Diameter",  f"{s['dp_avg']:.3f}",        "nm"],
-        ["BJH Surface Area",       f"{s['S_BJH']:.3f}",         "m\u00b2 g\u207b\u00b9"],
+        ["BJH Surface Area",       f"{s['S_BJH']:.3f}",         "m² g⁻¹"],
         ["BJH Peak Pore Diameter", f"{s['rp_peak_BJH']*2:.2f}", "nm"],
     ], columns=["Parameter", "Value", "Unit"])
     st.dataframe(df_out, use_container_width=True, hide_index=True)
 
     tag = (
-        '<span class="tag-valid">\u2713 C constant valid</span>'
+        '<span class="tag-valid">✓ C constant valid</span>'
         if bet_res["C_valid"] else
-        '<span class="tag-warning">\u26a0 C constant negative \u2014 check p/p\u2080 range</span>'
+        '<span class="tag-warning">⚠ C constant negative — check p/p₀ range</span>'
     )
     st.markdown(tag, unsafe_allow_html=True)
+
+    # ── Rouquerol summary on overview ─────────────────────────────────────────────
+    if use_rouquerol and rouquerol_result is not None:
+        best = rouquerol_result["best"]
+        if best is not None:
+            st.divider()
+            st.markdown("**Rouquerol BET Range**")
+            if best.valid:
+                st.success(
+                    f"✓ **PASS** — Auto-selected range: p/p₀ = "
+                    f"{best.p_min:.4f} – {best.p_max:.4f} ({best.n_points} points)  \n"
+                    f"S_BET = {best.S_BET:.3f} m² g⁻¹ | C = {best.C:.2f} | R² = {best.R2:.6f}"
+                )
+            else:
+                st.warning(
+                    f"⚠ **No fully consistent window found** — showing best compromise.  \n"
+                    f"p/p₀ = {best.p_min:.4f} – {best.p_max:.4f} ({best.n_points} points)  \n"
+                    f"S_BET = {best.S_BET:.3f} m² g⁻¹ | C = {best.C:.2f} | R² = {best.R2:.6f}"
+                )
+
+            # Compare with instrument range
+            if instrument_window is not None:
+                diff_pct = abs(best.S_BET - instrument_window.S_BET) / instrument_window.S_BET * 100
+                if diff_pct > 5:
+                    st.warning(
+                        f"⚠ Instrument range S_BET = {instrument_window.S_BET:.3f} m² g⁻¹ "
+                        f"differs by {diff_pct:.1f}% from Rouquerol range. "
+                        f"Consider reporting the Rouquerol value."
+                    )
+                else:
+                    st.info(
+                        f"Instrument range S_BET = {instrument_window.S_BET:.3f} m² g⁻¹ "
+                        f"agrees with Rouquerol within {diff_pct:.1f}%."
+                    )
 
 
 # ── TAB 2: BET PLOT ─────────────────────────────────────────────────────────────────
@@ -426,7 +519,7 @@ with tab_bet:
     with col_stats:
         st.markdown("**Regression Details**")
         st.table(pd.DataFrame({
-            "Parameter": ["Slope", "Intercept", "R\u00b2", "Vm (calc)", "C (calc)"],
+            "Parameter": ["Slope", "Intercept", "R²", "Vm (calc)", "C (calc)"],
             "Value": [
                 f"{bet_res['slope']:.6f}",
                 f"{bet_res['intercept']:.6f}",
@@ -436,7 +529,7 @@ with tab_bet:
             ],
         }))
         st.markdown(
-            f"Points used: **{s['start_pt']}** \u2192 **{s['end_pt']}** "
+            f"Points used: **{s['start_pt']}** → **{s['end_pt']}** "
             f"({s['end_pt'] - s['start_pt'] + 1} points)"
         )
     with col_fig:
@@ -452,14 +545,107 @@ with tab_bet:
         ax.set_xlabel(r"$p/p_0$")
         ax.set_ylabel(r"$1/[V_a(p_0/p-1)]$ (g cm$^{-3}$)")
         ax.legend(fontsize=8)
-        ax.text(0.05, 0.94, f"R\u00b2 = {bet_res['R2']:.5f}",
+        ax.text(0.05, 0.94, f"R² = {bet_res['R2']:.5f}",
                 transform=ax.transAxes, va="top", fontsize=9)
         plt.tight_layout()
         st.pyplot(fig_bet, use_container_width=True)
         plt.close(fig_bet)
 
 
-# ── TAB 3: BJH / PSD ─────────────────────────────────────────────────────────────────
+# ── TAB 3: ROUQUEROL ────────────────────────────────────────────────────────────────
+with tab_rouquerol:
+    st.subheader("Rouquerol BET Range Selection")
+
+    if not use_rouquerol:
+        st.info("Enable 'Use Rouquerol auto BET range' from the sidebar options.")
+    elif rouquerol_result is None:
+        st.warning("Rouquerol analysis could not be completed.")
+    else:
+        best = rouquerol_result["best"]
+        if best is None:
+            st.error("No usable BET window found.")
+        else:
+            col_r1, col_r2 = st.columns([1, 2])
+            with col_r1:
+                st.markdown("**Selected Range**")
+                st.table(pd.DataFrame({
+                    "Parameter": ["p/p₀ min", "p/p₀ max", "Points", "S_BET", "Vm", "C", "R²"],
+                    "Value": [
+                        f"{best.p_min:.4f}",
+                        f"{best.p_max:.4f}",
+                        f"{best.n_points}",
+                        f"{best.S_BET:.3f} m² g⁻¹",
+                        f"{best.Vm:.4f} cm³(STP) g⁻¹",
+                        f"{best.C:.2f}",
+                        f"{best.R2:.6f}",
+                    ],
+                }))
+                st.markdown(f"**Candidates scanned:** {rouquerol_result['n_candidates']}")
+                st.markdown(f"**Valid windows:** {rouquerol_result['n_valid']}")
+
+            with col_r2:
+                fig_rt = _plot_rouquerol_transform(p_ads, n_ads, best)
+                st.pyplot(fig_rt, use_container_width=True)
+                plt.close(fig_rt)
+
+            st.divider()
+            st.markdown("**Rouquerol Consistency Criteria**")
+            crit_df = pd.DataFrame({
+                "Criterion": [
+                    "C1: C > 0",
+                    "C2: n(1−p/p₀) increasing",
+                    "C3: nm in range",
+                    "C4: 1/(√C+1) matches p(nm)",
+                ],
+                "Status": [
+                    "✓" if best.c1_C_positive else "✗",
+                    "✓" if best.c2_n1mp_increasing else "✗",
+                    "✓" if best.c3_nm_in_range else "✗",
+                    "✓" if best.c4_pm_consistency else "✗",
+                ],
+                "Detail": [
+                    f"C = {best.C:.2f}",
+                    f"p_m,exp = {best.pm_exp:.4f}",
+                    f"p_m,th = {best.pm_theory:.4f}",
+                    f"tol = ±20%",
+                ],
+            })
+            st.dataframe(crit_df, use_container_width=True, hide_index=True)
+
+            if instrument_window is not None:
+                st.divider()
+                st.markdown("**Instrument Range vs Rouquerol**")
+                comp_df = pd.DataFrame({
+                    "Source": ["Instrument", "Rouquerol"],
+                    "p/p₀ range": [
+                        f"{instrument_window.p_min:.4f} – {instrument_window.p_max:.4f}",
+                        f"{best.p_min:.4f} – {best.p_max:.4f}",
+                    ],
+                    "S_BET (m² g⁻¹)": [
+                        f"{instrument_window.S_BET:.3f}",
+                        f"{best.S_BET:.3f}",
+                    ],
+                    "C": [
+                        f"{instrument_window.C:.2f}",
+                        f"{best.C:.2f}",
+                    ],
+                    "R²": [
+                        f"{instrument_window.R2:.6f}",
+                        f"{best.R2:.6f}",
+                    ],
+                    "Valid": [
+                        "✓" if instrument_window.valid else "✗",
+                        "✓" if best.valid else "✗",
+                    ],
+                })
+                st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.markdown("**Full Report**")
+            st.code(format_rouquerol_report(rouquerol_result, sample_name), language=None)
+
+
+# ── TAB 4: BJH / PSD ─────────────────────────────────────────────────────────────────
 with tab_bjh:
     st.subheader("BJH Pore Size Distribution")
 
@@ -477,7 +663,7 @@ with tab_bjh:
     ax1.text(rp[pk]+0.3, dVdr[pk]*0.9, f"{rp[pk]:.1f} nm", fontsize=8, color=C_BJH)
     ax1.axvline(N2_CAVITATION_NM, ls=":", lw=0.8, color="0.6")
     ax1.set_xlabel("Pore Diameter (nm)")
-    ax1.set_ylabel(r"d$V_p$/d$r_p$ (cm\u00b3 g\u207b\u00b9 nm\u207b\u00b9)")
+    ax1.set_ylabel(r"d$V_p$/d$r_p$ (cm³ g⁻¹ nm⁻¹)")
     ax1.set_xlim(left=0); ax1.set_ylim(bottom=0)
     ax1.set_title("Differential PSD")
 
@@ -485,8 +671,8 @@ with tab_bjh:
     ax2.plot(rp, cum_Vp,  "-",  color=C_CUM, lw=1.5, label="Vp cumul.")
     ax2r.plot(rp, cum_Sap, "--", color=C_BJH, lw=1.5, label="Sap cumul.")
     ax2.set_xlabel("Pore Diameter (nm)")
-    ax2.set_ylabel("Cum. Pore Volume (cm\u00b3 g\u207b\u00b9)", color=C_CUM)
-    ax2r.set_ylabel("Cum. Surface Area (m\u00b2 g\u207b\u00b9)", color=C_BJH)
+    ax2.set_ylabel("Cum. Pore Volume (cm³ g⁻¹)", color=C_CUM)
+    ax2r.set_ylabel("Cum. Surface Area (m² g⁻¹)", color=C_BJH)
     ax2.tick_params(axis="y", colors=C_CUM)
     ax2r.tick_params(axis="y", colors=C_BJH)
     ax2.set_xlim(left=0); ax2.set_ylim(bottom=0)
@@ -502,21 +688,21 @@ with tab_bjh:
         st.markdown("**Hysteresis Feature Scores**")
         sc = hyst_cls["scores"]
         st.dataframe(
-            pd.DataFrame([[k, v, "\u2588"*v+"\u2591"*(8-v)]
+            pd.DataFrame([[k, v, "█"*v+"░"*(8-v)]
                           for k, v in sorted(sc.items(), key=lambda x: -x[1])],
                          columns=["Type", "Score", "Bar"]),
             hide_index=True, use_container_width=False
         )
         st.markdown("**Feature Analysis**")
         st.dataframe(
-            pd.DataFrame([[k, ("\u2713" if v is True else "\u2717" if v is False else str(v))]
+            pd.DataFrame([[k, ("✓" if v is True else "✗" if v is False else str(v))]
                           for k, v in hyst_cls["features"].items()],
                          columns=["Feature", "Value"]),
             hide_index=True, use_container_width=False
         )
 
 
-# ── TAB 4: T-PLOT ──────────────────────────────────────────────────────────────────
+# ── TAB 5: T-PLOT ──────────────────────────────────────────────────────────────────
 with tab_tplot:
     if not show_tplot:
         st.info("Enable T-Plot analysis from the sidebar options.")
@@ -525,10 +711,10 @@ with tab_tplot:
         try:
             from tplot_analysis import TPlotAnalyser
             tp = TPlotAnalyser(
-                pressure=data["ads"][:, 0],
-                volume_adsorbed=data["ads"][:, 1],
-                s_bet=s["S_BET"],
-                total_pore_volume=s["Vp_total"],
+                pressure          = data["ads"][:, 0],
+                volume_adsorbed   = data["ads"][:, 1],
+                s_bet             = s["S_BET"],
+                total_pore_volume = s["Vp_total"],
             )
             col_t1, col_t2 = st.columns([1, 2])
             with col_t1:
@@ -543,7 +729,7 @@ with tab_tplot:
                         f"{res.get('V_micro', float('nan')):.4f}",
                         f"{res.get('V_meso', float('nan')):.4f}",
                     ],
-                    "Unit": ["m\u00b2/g", "m\u00b2/g", "m\u00b2/g", "cm\u00b3/g", "cm\u00b3/g"],
+                    "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "cm³ g⁻¹", "cm³ g⁻¹"],
                 }))
             with col_t2:
                 buf = io.BytesIO()
@@ -556,7 +742,7 @@ with tab_tplot:
             st.error(f"T-Plot error: {e}")
 
 
-# ── TAB 5: DOWNLOAD ─────────────────────────────────────────────────────────────────
+# ── TAB 6: DOWNLOAD ─────────────────────────────────────────────────────────────────
 with tab_download:
     st.subheader("Download Results")
 
@@ -590,8 +776,18 @@ with tab_download:
         ["BJH_peak_diam (nm)",  f"{s['rp_peak_BJH']*2:.2f}"],
         ["Isotherm type",       iso_cls["type"]],
         ["Hysteresis type",     hyst_cls["type"]],
-        ["Hysteresis conf.",    hyst_cls.get("confidence", "\u2014")],
+        ["Hysteresis conf.",    hyst_cls.get("confidence", "—")],
     ]
+    if use_rouquerol and rouquerol_result is not None and rouquerol_result["best"] is not None:
+        best = rouquerol_result["best"]
+        report_rows.extend([
+            ["Rouquerol p/p0 min",  f"{best.p_min:.4f}"],
+            ["Rouquerol p/p0 max",  f"{best.p_max:.4f}"],
+            ["Rouquerol S_BET",     f"{best.S_BET:.3f}"],
+            ["Rouquerol C",         f"{best.C:.2f}"],
+            ["Rouquerol R2",        f"{best.R2:.6f}"],
+            ["Rouquerol valid",     str(best.valid)],
+        ])
     st.download_button(
         label="⬇ Download CSV Report",
         data=pd.DataFrame(report_rows, columns=["Parameter","Value"]).to_csv(index=False).encode(),
@@ -605,4 +801,4 @@ with tab_download:
         "Jafari, H. (2026). BET_analyser: Publication-Quality BET/BJH + T-Plot "
         "Analysis Tool (v2.1.0). Zenodo. DOI: 10.5281/zenodo.21104234"
     )
-    st.code(citation)
+    st.code(citation, language=None)
