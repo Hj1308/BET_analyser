@@ -10,6 +10,7 @@ from rouquerol import (
     monolayer_pressure_theory,
     rouquerol_transform,
     select_bet_range,
+    bet_sensitivity_heatmap,
 )
 
 
@@ -111,3 +112,20 @@ def test_bet_uncertainty_propagation():
     assert fit["sigma_C"] > 0
     S_true = Vm * N2_BET_FACTOR
     assert abs(fit["S_BET"] - S_true) < 3.0 * fit["sigma_S_BET"]
+
+
+def test_bet_sensitivity_heatmap_dimensions_and_stability():
+    """Heatmap returns NxN matrices; ideal isotherm gives stable S_BET."""
+    p, n, C, Vm = _ideal_bet_isotherm()
+    result = bet_sensitivity_heatmap(p, n)
+    N = result["n_points"]
+    assert result["s_bet"].shape == (N, N)
+    assert result["valid"].shape == (N, N)
+    assert result["r2"].shape == (N, N)
+    assert result["valid"].sum() > 0
+    S_true = Vm * N2_BET_FACTOR
+    valid_s = result["s_bet"][result["valid"]]
+    assert np.all(np.abs(valid_s - S_true) / S_true < 0.01)
+    for i in range(N):
+        for j in range(i):
+            assert np.isnan(result["s_bet"][i, j])

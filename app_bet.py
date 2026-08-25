@@ -30,6 +30,7 @@ from rouquerol import (
     diagnose_instrument_range,
     format_rouquerol_report,
     rouquerol_transform,
+    bet_sensitivity_heatmap,
 )
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -273,6 +274,49 @@ def _plot_rouquerol_transform(p_rel, n, best_window) -> plt.Figure:
     return fig
 
 
+
+def _plot_bet_heatmap(heatmap_result, best_window) -> plt.Figure:
+    """Plot S_BET sensitivity heatmap (BEaTmap-style)."""
+    setup_plot_style()
+    s_bet = heatmap_result["s_bet"]
+    valid = heatmap_result["valid"]
+    p = heatmap_result["p_sorted"]
+    N = heatmap_result["n_points"]
+
+    s_masked = np.ma.masked_where(~valid | ~np.isfinite(s_bet), s_bet)
+
+    fig, ax = plt.subplots(figsize=(7, 5.5))
+    cmap = plt.cm.RdYlGn_r.copy()
+    cmap.set_bad(color="#e0e0e0")
+
+    im = ax.imshow(s_masked, aspect="auto", cmap=cmap,
+                   origin="lower", interpolation="nearest")
+
+    if best_window is not None:
+        p_lo = np.searchsorted(p, best_window.p_min)
+        p_hi = np.searchsorted(p, best_window.p_max)
+        if p_hi > p_lo:
+            rect = plt.Rectangle((p_lo, p_lo), p_hi - p_lo, p_hi - p_lo,
+                                 linewidth=2, edgecolor="blue",
+                                 facecolor="none", linestyle="--")
+            ax.add_patch(rect)
+
+    tick_step = max(1, N // 8)
+    tick_pos = np.arange(0, N, tick_step)
+    tick_labels = [f"{p[i]:.2f}" for i in tick_pos]
+    ax.set_xticks(tick_pos)
+    ax.set_xticklabels(tick_labels, fontsize=8, rotation=45)
+    ax.set_yticks(tick_pos)
+    ax.set_yticklabels(tick_labels, fontsize=8)
+
+    ax.set_xlabel("End point p/p₀")
+    ax.set_ylabel("Start point p/p₀")
+    plt.colorbar(im, ax=ax, label="S_BET (m² g⁻¹)")
+    ax.set_title("BET Sensitivity Heatmap", fontsize=10)
+    plt.tight_layout()
+    return fig
+
+
 def _match_instrument_window_by_pressure(p_ads, n_ads, bet_pts,
                                          start_pt, end_pt):
     """
@@ -415,6 +459,12 @@ if use_rouquerol:
             )
         except Exception:
             instrument_window = None
+    heatmap_result = None
+    if rouquerol_result is not None:
+        try:
+            heatmap_result = bet_sensitivity_heatmap(p_ads, n_ads)
+        except Exception:
+            heatmap_result = None
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -631,6 +681,19 @@ with tab_rouquerol:
                 ],
             })
             st.dataframe(crit_df, use_container_width=True, hide_index=True)
+
+            if heatmap_result is not None:
+                st.divider()
+                st.markdown("**BET Sensitivity Heatmap**")
+                st.caption(
+                    "Each cell shows S_BET for a specific p/p₀ window "
+                    "(start × end). Colored = valid (Rouquerol PASS). "
+                    "Gray = invalid. Blue dashed = selected range."
+                )
+                fig_hm = _plot_bet_heatmap(heatmap_result, best)
+                st.pyplot(fig_hm, use_container_width=True)
+                plt.close(fig_hm)
+
 
             if instrument_window is not None:
                 st.divider()

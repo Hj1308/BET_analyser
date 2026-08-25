@@ -407,3 +407,63 @@ def format_rouquerol_report(result: dict, sample_name: str = "Sample") -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def bet_sensitivity_heatmap(
+    p_rel: np.ndarray,
+    n: np.ndarray,
+    *,
+    min_points: int = MIN_POINTS_DEFAULT,
+    criterion4_tol: float = CRITERION4_TOL_DEFAULT,
+) -> dict:
+    """Compute S_BET for ALL possible windows — BEaTmap-style sensitivity map.
+
+    For every contiguous window [i, j] with at least ``min_points`` points,
+    the BET fit is evaluated and S_BET, C, R² and Rouquerol validity are
+    stored in 2D matrices.  The result can be plotted as a heatmap to show
+    how sensitive S_BET is to the choice of pressure range.
+
+    Returns
+    -------
+    dict with keys:
+        s_bet    : (N, N) ndarray — S_BET for each window (NaN if too few
+                   points or non-physical)
+        c        : (N, N) ndarray — BET C constant
+        r2       : (N, N) ndarray — R² of the linear fit
+        valid    : (N, N) bool ndarray — Rouquerol-valid windows
+        p_sorted : (N,) ndarray — sorted p/p0 values (axis labels)
+        n_points : int — number of points after filtering
+    """
+    p_rel = np.asarray(p_rel, dtype=float)
+    n = np.asarray(n, dtype=float)
+    if p_rel.ndim != 1 or n.ndim != 1 or len(p_rel) != len(n):
+        raise ValueError("p_rel and n must be 1-D arrays of equal length.")
+
+    order = np.argsort(p_rel)
+    p_s, n_s = p_rel[order], n[order]
+    finite = np.isfinite(p_s) & np.isfinite(n_s) & (p_s > 0) & (p_s < 1) & (n_s > 0)
+    p_s, n_s = p_s[finite], n_s[finite]
+
+    N = len(p_s)
+    s_bet = np.full((N, N), np.nan)
+    c_val = np.full((N, N), np.nan)
+    r2_val = np.full((N, N), np.nan)
+    valid = np.full((N, N), False)
+
+    for i in range(N):
+        for j in range(i + min_points - 1, N):
+            win = evaluate_window(p_s, n_s, i, j, criterion4_tol=criterion4_tol)
+            if win is not None:
+                s_bet[i, j] = win.S_BET
+                c_val[i, j] = win.C
+                r2_val[i, j] = win.R2
+                valid[i, j] = win.valid
+
+    return {
+        "s_bet": s_bet,
+        "c": c_val,
+        "r2": r2_val,
+        "valid": valid,
+        "p_sorted": p_s,
+        "n_points": N,
+    }
