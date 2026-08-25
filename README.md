@@ -48,6 +48,7 @@ streamlit run app_bet.py
 |--------|------|-------------|
 | **BET/BJH** | `bet_analysis.py` | Isotherm + hysteresis classification, BET regression, BJH PSD, cumulative pore volume, 4-panel figure |
 | **Rouquerol** | `rouquerol.py` | Auto BET linear-range selection via the four Rouquerol consistency criteria (IUPAC 2015 / ISO 9277); multi-window scan; instrument-range diagnosis |
+| **Langmuir** | `langmuir.py` | Langmuir monolayer capacity, affinity constant, surface area, and propagated regression uncertainty |
 | **T-Plot** | `tplot_analysis.py` | Harkins-Jura T-Plot: micropore volume, S_ext, pore type distribution (micro/meso/macro %), 2-panel figure |
 | **Web app** | `app_bet.py` | Streamlit UI: XLS/XLSX/CSV upload, all analyses, downloadable figure + CSV report |
 | **XLS reader** | `xls_reader.py` | Legacy .xls reader via xlrd API (bypasses pandas engine guard) |
@@ -79,6 +80,21 @@ Run the unit tests:
 ```bash
 pip install pytest
 pytest tests/ -v
+```
+
+---
+
+## ⚗️ Langmuir Surface Area
+
+`langmuir.py` provides a **complementary monolayer-adsorption model** alongside BET. It fits the linearised Langmuir isotherm `(p/p0)/n` vs `p/p0` to report the monolayer capacity `n_m`, the affinity constant `K`, the specific surface area `S_Langmuir = n_m × 4.353`, the regression `R²`, and the propagated first-order uncertainty on each quantity.
+
+S_Langmuir uses the **same N₂ cross-section factor as BET**, so the two areas are directly comparable. However, Langmuir is *not* an automatic replacement for BET: it assumes monolayer adsorption on uniform, non-interacting sites, so it should be interpreted cautiously for heterogeneous, mesoporous, or multilayer-adsorption systems. It is particularly useful to compare alongside BET for **Type I / microporous isotherms**, where the monolayer model is often physically reasonable.
+
+```python
+from langmuir import fit_langmuir_window, format_langmuir_report
+
+result = fit_langmuir_window(ads[:, 0], ads[:, 1])
+print(format_langmuir_report(result, "C3N4"))
 ```
 
 ---
@@ -222,8 +238,9 @@ BET_analyser/
 
 | Version | Key Changes |
 |---------|-------------|
+| **unreleased (v3)** | Langmuir surface-area tab + uncertainty propagation (`langmuir.py`); BET sensitivity heatmap |
 | **v2.2.0** | Rouquerol auto BET range selection (`rouquerol.py`) with 4 consistency criteria + multi-window scan; R²≥0.999 linearity filter; **BET uncertainty propagation** (σ(S_BET), σ(C) from linregress stderr); Rouquerol tab in Streamlit app; instrument range matched by p/p₀; adjustable T-Plot fit window; unit tests (8) + CI; .xls reading via `xls_reader` restored |
-| **v2.2.0** | IUPAC 2015 validity checks (C < 0 warning, monotonicity check); named physical constants; `np.trapz` compatibility fix for NumPy < 2.0; `setup_plot_style()` isolated to prevent import side-effects; Type I(a)/I(b) sub-classification; BJH adsorption branch noted in report |
+| **v2.1.0** | IUPAC 2015 validity checks (C < 0 warning, monotonicity check); named physical constants; `np.trapz` compatibility fix for NumPy < 2.0; `setup_plot_style()` isolated to prevent import side-effects; Type I(a)/I(b) sub-classification; BJH adsorption branch noted in report |
 | **v2.0.0** | T-Plot module (`tplot_analysis.py`); 6-feature hysteresis scoring (H1–H4); confidence level output; N₂ cavitation marker on BJH panel |
 | **v1.0.0** | Initial release: BET regression, BJH PSD, IUPAC isotherm classification, 4-panel figure |
 

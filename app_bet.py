@@ -32,6 +32,12 @@ from rouquerol import (
     rouquerol_transform,
     bet_sensitivity_heatmap,
 )
+from langmuir import (
+    fit_langmuir_window,
+    format_langmuir_report,
+    langmuir_linear_y,
+    MIN_LANGMUIR_POINTS,
+)
 
 # ════════════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
@@ -323,6 +329,37 @@ def _plot_bet_heatmap(heatmap_result, best_window) -> plt.Figure:
     return fig
 
 
+def _plot_langmuir_linear(p_all, n_all, result) -> plt.Figure:
+    """Draw the Langmuir linear plot: (p/p0)/n vs p/p0 with fitted line."""
+    setup_plot_style()
+    fig, ax = plt.subplots(figsize=(5, 3.8))
+
+    y_all = langmuir_linear_y(p_all, n_all)
+    valid_all = np.isfinite(y_all)
+    ax.scatter(p_all[valid_all], y_all[valid_all],
+               color="0.75", s=22, zorder=2, label="All points")
+
+    x = result["x"]
+    y = result["y"]
+    ax.scatter(x, y, color=C_BJH, s=32, zorder=4, label="Fitted")
+
+    x_fit = np.linspace(x.min(), x.max(), 200)
+    ax.plot(x_fit, result["slope"] * x_fit + result["intercept"],
+            "-", color=C_BJH, lw=1.6)
+
+    ax.set_xlabel(r"$p/p_0$")
+    ax.set_ylabel(r"$(p/p_0)/n$  (g cm$^{-3}$)")
+    ax.legend(fontsize=8)
+    ax.text(0.05, 0.94, f"R² = {result['R2']:.5f}",
+            transform=ax.transAxes, va="top", fontsize=9)
+    ax.text(0.05, 0.85,
+            f"S = {result['S_Langmuir']:.2f} ± {result['sigma_S_Langmuir']:.2f} m² g⁻¹",
+            transform=ax.transAxes, va="top", fontsize=9)
+    ax.set_title("Langmuir Linear Plot", fontsize=10)
+    plt.tight_layout()
+    return fig
+
+
 def _match_instrument_window_by_pressure(p_ads, n_ads, bet_pts,
                                          start_pt, end_pt):
     """
@@ -477,8 +514,10 @@ if use_rouquerol:
 # RESULTS TABS
 # ════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_bet, tab_rouquerol, tab_bjh, tab_tplot, tab_download = st.tabs([
-    "📊 Overview", "📈 BET", "🔬 Rouquerol", "🔵 BJH / PSD", "🔬 T-Plot", "📥 Download"
+langmuir_result = None
+
+tab_overview, tab_bet, tab_langmuir, tab_rouquerol, tab_bjh, tab_tplot, tab_download = st.tabs([
+    "📊 Overview", "📈 BET", "⚗️ Langmuir", "🔬 Rouquerol", "🔵 BJH / PSD", "🔬 T-Plot", "📥 Download"
 ])
 
 
@@ -628,7 +667,145 @@ with tab_bet:
         plt.close(fig_bet)
 
 
-# ── TAB 3: ROUQUEROL ────────────────────────────────────────────────────────────────
+# ── TAB 3: LANGMUIR ─────────────────────────────────────────────────────────────────
+with tab_langmuir:
+    st.subheader("Langmuir Surface Area")
+
+    st.warning(
+        "**Langmuir interpretation:**\n\n"
+        "The Langmuir model assumes monolayer adsorption on uniform adsorption "
+        "sites. S_Langmuir is reported here as a complementary descriptor, not as "
+        "an automatic replacement for S_BET. Interpret it cautiously for "
+        "heterogeneous, mesoporous, or multilayer-adsorption systems."
+    )
+
+    lang_valid = (
+        np.isfinite(p_ads)
+        & np.isfinite(n_ads)
+        & (p_ads > 0)
+        & (p_ads < 1)
+        & (n_ads > 0)
+    )
+    p_lang = p_ads[lang_valid]
+    n_lang = n_ads[lang_valid]
+
+    if len(p_lang) < MIN_LANGMUIR_POINTS:
+        st.error(
+            "Langmuir analysis requires at least 3 physical adsorption points "
+            "with 0 < p/p₀ < 1 and positive adsorbed amount."
+        )
+    else:
+        p_lo_data = float(np.min(p_lang))
+        p_hi_data = float(np.max(p_lang))
+
+        # Conservative default (0.05–0.30), clamped to the available range so the
+        # slider never crashes when the data does not cover the classic window.
+        default_lo, default_hi = 0.05, 0.30
+        if default_hi <= p_lo_data or default_lo >= p_hi_data:
+            default_lo, default_hi = p_lo_data, p_hi_data
+        else:
+            default_lo = max(default_lo, p_lo_data)
+            default_hi = min(default_hi, p_hi_data)
+
+        step = max(round((p_hi_data - p_lo_data) / 200, 4), 0.001)
+        lang_lo, lang_hi = st.slider(
+            "Langmuir fitting window (p/p₀)",
+            min_value=p_lo_data,
+            max_value=p_hi_data,
+            value=(default_lo, default_hi),
+            step=step,
+            format="%.3f",
+        )
+
+        mask = (p_lang >= lang_lo - 1e-9) & (p_lang <= lang_hi + 1e-9)
+        p_sel = p_lang[mask]
+        n_sel = n_lang[mask]
+        order = np.argsort(p_sel)
+        p_sel = p_sel[order]
+        n_sel = n_sel[order]
+
+        if len(p_sel) < MIN_LANGMUIR_POINTS:
+            st.warning(
+                "Langmuir fit requires at least 3 measured points in the selected p/p₀ window."
+            )
+        else:
+            try:
+                result = fit_langmuir_window(p_sel, n_sel)
+            except ValueError as e:
+                st.error(f"Langmuir fit error: {e}")
+                result = None
+
+            if result is not None:
+                status = "PASS" if result["physical_fit"] else "FAIL"
+
+                if result["physical_fit"]:
+                    langmuir_result = result
+                else:
+                    st.warning(
+                        "The Langmuir regression completed, but the fitted "
+                        "parameters are non-physical (slope, intercept, n_m, "
+                        "or K is not positive). The result will not be added "
+                        "to the downloadable CSV report."
+                    )
+
+                col_l1, col_l2 = st.columns([1, 2])
+                with col_l1:
+                    st.markdown("**Langmuir Fit Results**")
+                    st.table(pd.DataFrame({
+                        "Parameter": [
+                            "p/p₀ min", "p/p₀ max", "Points",
+                            "S_Langmuir", "n_m", "K", "R²", "Fit status",
+                        ],
+                        "Value": [
+                            f"{result['p_min']:.4f}",
+                            f"{result['p_max']:.4f}",
+                            f"{result['n_points']}",
+                            f"{result['S_Langmuir']:.2f} ± {result['sigma_S_Langmuir']:.2f} m² g⁻¹",
+                            f"{result['n_m']:.2f} ± {result['sigma_n_m']:.2f} cm³(STP) g⁻¹",
+                            f"{result['K']:.2f} ± {result['sigma_K']:.2f} (p/p0)⁻¹",
+                            f"{result['R2']:.6f}",
+                            status,
+                        ],
+                    }))
+
+                with col_l2:
+                    fig_lang = _plot_langmuir_linear(p_lang, n_lang, result)
+                    st.pyplot(fig_lang, use_container_width=True)
+                    plt.close(fig_lang)
+
+                st.divider()
+                st.markdown("**Comparison with BET**")
+                comp_rows = [
+                    ["Instrument S_BET", f"{s['S_BET']:.2f}", "—"],
+                ]
+                if use_rouquerol and rouquerol_result is not None and rouquerol_result["best"] is not None:
+                    rb = rouquerol_result["best"]
+                    comp_rows.append(
+                        ["Rouquerol S_BET", f"{rb.S_BET:.2f}", f"{rb.sigma_S_BET:.2f}"]
+                    )
+                else:
+                    comp_rows.append(["Rouquerol S_BET", "—", "—"])
+                comp_rows.append(
+                    ["S_Langmuir", f"{result['S_Langmuir']:.2f}", f"{result['sigma_S_Langmuir']:.2f}"]
+                )
+                comp_df = pd.DataFrame(
+                    comp_rows,
+                    columns=["Method", "Surface area (m² g⁻¹)", "Uncertainty (m² g⁻¹)"],
+                )
+                st.dataframe(comp_df, use_container_width=True, hide_index=True)
+                st.caption(
+                    "BET and Langmuir areas arise from different adsorption-model "
+                    "assumptions; agreement or disagreement should be interpreted with "
+                    "the isotherm type, pore structure, and quality of fit."
+                )
+
+                with st.expander("Langmuir model and equations"):
+                    st.latex(r"n = n_m \frac{K(p/p_0)}{1 + K(p/p_0)}")
+                    st.latex(r"\frac{p/p_0}{n} = \frac{1}{K n_m} + \frac{p/p_0}{n_m}")
+                    st.latex(r"S_{\mathrm{Langmuir}} = n_m \times 4.353")
+
+
+# ── TAB 4: ROUQUEROL ────────────────────────────────────────────────────────────────
 with tab_rouquerol:
     st.subheader("Rouquerol BET Range Selection")
 
@@ -740,7 +917,7 @@ with tab_rouquerol:
             st.code(format_rouquerol_report(rouquerol_result, sample_name), language=None)
 
 
-# ── TAB 4: BJH / PSD ─────────────────────────────────────────────────────────────────
+# ── TAB 5: BJH / PSD ─────────────────────────────────────────────────────────────────
 with tab_bjh:
     st.subheader("BJH Pore Size Distribution")
 
@@ -797,7 +974,7 @@ with tab_bjh:
         )
 
 
-# ── TAB 5: T-PLOT ──────────────────────────────────────────────────────────────────
+# ── TAB 6: T-PLOT ──────────────────────────────────────────────────────────────────
 with tab_tplot:
     if not show_tplot:
         st.info("Enable T-Plot analysis from the sidebar options.")
@@ -898,7 +1075,7 @@ with tab_tplot:
             st.error(f"T-Plot error: {e}")
 
 
-# ── TAB 6: DOWNLOAD ─────────────────────────────────────────────────────────────────
+# ── TAB 7: DOWNLOAD ─────────────────────────────────────────────────────────────────
 with tab_download:
     st.subheader("Download Results")
 
@@ -943,6 +1120,17 @@ with tab_download:
             ["Rouquerol C",         f"{best.C:.2f} ± {best.sigma_C:.2f}"],
             ["Rouquerol R2",        f"{best.R2:.6f}"],
             ["Rouquerol valid",     str(best.valid)],
+        ])
+    if langmuir_result is not None:
+        report_rows.extend([
+            ["Langmuir p/p0 min",  f"{langmuir_result['p_min']:.4f}"],
+            ["Langmuir p/p0 max",  f"{langmuir_result['p_max']:.4f}"],
+            ["Langmuir S (m2/g)",  f"{langmuir_result['S_Langmuir']:.3f}"],
+            ["Langmuir S uncertainty (m2/g)", f"{langmuir_result['sigma_S_Langmuir']:.3f}"],
+            ["Langmuir n_m (cm3(STP)/g)", f"{langmuir_result['n_m']:.4f}"],
+            ["Langmuir K ((p/p0)^-1)", f"{langmuir_result['K']:.2f}"],
+            ["Langmuir R2",        f"{langmuir_result['R2']:.6f}"],
+            ["Langmuir physical fit", str(langmuir_result["physical_fit"])],
         ])
     st.download_button(
         label="⬇ Download CSV Report",
