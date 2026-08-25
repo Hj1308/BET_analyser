@@ -600,7 +600,8 @@ def verify_bet(bet_pts: np.ndarray, summary: dict,
 # ══════════════════════════════════════════════════════════════
 
 def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
-             bet_res: dict, sample_name: str, save: bool = True):
+             bet_res: dict, sample_name: str, save: bool = True,
+             show: bool = True):
     """
     4-panel publication figure:
       [A] N₂ Adsorption–Desorption Isotherm
@@ -738,13 +739,15 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
     fig.suptitle(f"BET/BJH Analysis — {sample_name}",
                  fontsize=12, y=1.01, fontweight="bold")
 
+    plt.tight_layout()
+
     if save:
         out = f"{sample_name.replace(' ', '_')}_BET_analysis.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         print(f"\n  Figure saved → {out}")
 
-    plt.tight_layout()
-    plt.show()
+    if show:
+        plt.show()
 
 
 def _label_panel(ax, letter):
@@ -839,7 +842,10 @@ def main():
     parser.add_argument("--sample", default="Sample",
                         help="Sample name for plot title and file name")
     parser.add_argument("--no-show", action="store_true",
-                        help="Save figure without displaying")
+                        help="Suppress the interactive figure window "
+                             "(the PNG is still saved)")
+    parser.add_argument("--no-save", action="store_true",
+                        help="Do not write the PNG file")
     parser.add_argument("--rouquerol", action="store_true",
                         help="Run Rouquerol auto BET range selection")
     args = parser.parse_args()
@@ -854,7 +860,7 @@ def main():
 
     print_report(data, iso_cls, hyst_cls, bet_res, args.sample)
     plot_all(data, iso_cls, hyst_cls, bet_res, args.sample,
-             save=not args.no_show)
+             save=not args.no_save, show=not args.no_show)
 
 
 if __name__ == "__main__":
