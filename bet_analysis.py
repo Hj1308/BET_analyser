@@ -44,7 +44,10 @@ _trapezoid = getattr(np, "trapezoid", None) or np.trapz
 
 N2_BET_FACTOR         = 4.353   # m²/g per cm³(STP)/g  [σ_N2=0.162 nm², NA, Vmolar]
 N2_TPLOT_SLOPE_FACTOR = 15.47   # m²/g per cm³/(g·Å)   [Harkins-Jura conversion]
-N2_LIQUID_FACTOR      = 1547.0  # cm³(STP) per cm³(liquid N₂) at 77 K
+# Gurvich rule: V_liquid(cm3/g) = V_STP(cm3/g) x N2_STP_TO_LIQUID
+#   = (M / V_molar) / rho = (28.013 / 22413.96) / 0.808
+# Ref: Gurvich (1915); Microtrac AppNote "The Adsorption Isotherm", eq. 1
+N2_STP_TO_LIQUID      = 1.5468e-3   # cm3(liquid N2) per cm3(STP), 77 K
 N2_CAVITATION_NM      = 3.4     # forced closure diameter (nm) for N₂ at 77 K
 
 

@@ -33,6 +33,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import linregress
 
+from bet_analysis import N2_TPLOT_SLOPE_FACTOR, N2_STP_TO_LIQUID
+
 # ── Publication style (matches bet_analysis.py) ────────────────
 plt.rcParams.update({
     "font.family"     : "serif",
@@ -114,9 +116,9 @@ class TPlotAnalyser:
         range is auto-expanded.
 
         Conversion factors:
-            S_ext (m²/g)    = slope × 15.47
-            V_micro (cm³/g) = intercept × 1e-3 / 1.547
-              (1 cm³ STP ÷ 1547 → cm³ liquid; multiply slope by 15.47 m²/g per cm³/(g·Å))
+            S_ext (m²/g)    = slope × N2_TPLOT_SLOPE_FACTOR
+            V_micro (cm³/g) = intercept × N2_STP_TO_LIQUID
+              (Gurvich rule: V_liquid = V_STP × (M/V_molar)/rho ≈ 1.5468e-3)
 
         Returns
         -------
@@ -136,8 +138,8 @@ class TPlotAnalyser:
             mask  = (self.t >= t_min) & (self.t <= t_max)
 
         slope, intercept, r, *_ = linregress(self.t[mask], self.v[mask])
-        s_ext   = slope * 15.47
-        v_micro = max(intercept * 1e-3 / 1.547, 0.0)
+        s_ext   = slope * N2_TPLOT_SLOPE_FACTOR
+        v_micro = max(intercept * N2_STP_TO_LIQUID, 0.0)
 
         return {
             "S_ext_m2g"    : round(s_ext,   2),
