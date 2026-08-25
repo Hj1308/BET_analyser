@@ -112,8 +112,9 @@ class TPlotAnalyser:
         Fit the linear region of the t-plot.
 
         Default range 3.5–5.0 Å is the standard IUPAC/BET linear region
-        (p/p₀ ≈ 0.08–0.30). If fewer than 2 points fall in range, the
-        range is auto-expanded.
+        (p/p₀ ≈ 0.08–0.30). If fewer than 3 points fall in range, the
+        range is auto-expanded; if it still has fewer than 3 points a
+        ValueError is raised (a 2-point fit has R² = 1.0 by construction).
 
         Conversion factors:
             S_ext (m²/g)    = slope × N2_TPLOT_SLOPE_FACTOR
@@ -130,25 +131,39 @@ class TPlotAnalyser:
             intercept     — raw regression intercept
             t_range       — (t_min, t_max) actually used
             n_points      — number of points fitted
+            low_confidence— True when exactly 3 points were fitted
+
+        Raises
+        ------
+        ValueError
+            If fewer than 3 points are available even after auto-expansion.
         """
         mask = (self.t >= t_min) & (self.t <= t_max)
-        if mask.sum() < 2:
+        if mask.sum() < 3:
             t_min = float(self.t.min()) + 0.2
             t_max = float(self.t.max()) - 0.2
             mask  = (self.t >= t_min) & (self.t <= t_max)
+
+        n_points = int(mask.sum())
+        if n_points < 3:
+            raise ValueError(
+                f"t-plot fit needs at least 3 points in window "
+                f"({t_min:.2f}–{t_max:.2f} Å) but only {n_points} are available."
+            )
 
         slope, intercept, r, *_ = linregress(self.t[mask], self.v[mask])
         s_ext   = slope * N2_TPLOT_SLOPE_FACTOR
         v_micro = max(intercept * N2_STP_TO_LIQUID, 0.0)
 
         return {
-            "S_ext_m2g"    : round(s_ext,   2),
-            "V_micro_cm3g" : round(v_micro, 5),
-            "R2_tplot"     : round(r ** 2,  5),
-            "slope"        : round(slope,   5),
-            "intercept"    : round(intercept, 5),
-            "t_range"      : (round(t_min, 2), round(t_max, 2)),
-            "n_points"     : int(mask.sum()),
+            "S_ext_m2g"     : round(s_ext,   2),
+            "V_micro_cm3g"  : round(v_micro, 5),
+            "R2_tplot"      : round(r ** 2,  5),
+            "slope"         : round(slope,   5),
+            "intercept"     : round(intercept, 5),
+            "t_range"       : (round(t_min, 2), round(t_max, 2)),
+            "n_points"      : n_points,
+            "low_confidence": n_points == 3,
         }
 
     # ──────────────────────────────────────────────────────────
