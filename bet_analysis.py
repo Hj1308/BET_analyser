@@ -471,6 +471,11 @@ def classify_hysteresis(ads: np.ndarray, des: np.ndarray) -> dict:
       H2 : gentle ads, steep des (triangular loop) → ink-bottle pores
       H3 : no plateau, non-rigid slit-shaped       → plate aggregates
       H4 : nearly flat + narrow loop               → slit + micropores
+
+    The ``score_share`` field is the winning type's share of the total score
+    (a heuristic for how decisively one type wins), not a probability. On a
+    score tie all tied types are returned joined by "/" with a "low"
+    share label rather than being broken by dict insertion order.
     """
     loop = hysteresis_loop(ads, des)
     if loop["p_grid"] is None:
@@ -553,13 +558,22 @@ def classify_hysteresis(ads: np.ndarray, des: np.ndarray) -> dict:
 
     if is_flat_low and norm_area < 0.12:
         scores["H4"] += 3
-    if is_flat_low:
-        scores["H4"] += 2
     if not has_plateau and norm_area < 0.18:
         scores["H4"] += 1
 
-    best = max(scores, key=scores.get)
-    confidence = scores[best] / (sum(scores.values()) + 1e-9)
+    # Deterministic tie-break. ``max(scores, key=scores.get)`` resolves a tie
+    # by dict insertion order (a Python implementation detail, undocumented).
+    # Instead, on a tie we report every tied type joined by "/" (e.g.
+    # "H3/H4") with a "low" score-share label, so the ambiguity is explicit
+    # rather than silently resolved.
+    max_score = max(scores.values())
+    tied = [k for k in ("H1", "H2", "H3", "H4") if scores[k] == max_score]
+    best = tied[0] if len(tied) == 1 else "/".join(tied)
+
+    # share of the total score carried by the winning type(s) — a heuristic
+    # measure of how decisively one type wins, NOT a probability. Kept as a
+    # number but labelled as a score share in reports and the UI.
+    score_share = max_score / (sum(scores.values()) + 1e-9)
 
     explanations = {
         "H1": ("Narrow, symmetric loop. Both adsorption and desorption "
@@ -578,8 +592,16 @@ def classify_hysteresis(ads: np.ndarray, des: np.ndarray) -> dict:
                "and narrow slit-shaped pores."),
     }
 
-    conf_label = ("high" if confidence > 0.55 else
-                  "moderate" if confidence > 0.40 else "low")
+    if len(tied) == 1:
+        explanation = explanations[best]
+        score_share_label = ("high" if score_share > 0.55 else
+                             "moderate" if score_share > 0.40 else "low")
+    else:
+        explanation = ("Score tie between " + " and ".join(tied) + ". "
+                       "The measured features are consistent with more than "
+                       "one loop type; the ambiguity is reported instead of "
+                       "forcing a single label.")
+        score_share_label = "low"
 
     features = {
         "hysteresis_area_norm" : round(norm_area, 4),
@@ -593,9 +615,9 @@ def classify_hysteresis(ads: np.ndarray, des: np.ndarray) -> dict:
     }
 
     return {"type": best,
-            "explanation": explanations[best],
-            "confidence": conf_label,
-            "confidence_pct": round(confidence * 100, 1),
+            "explanation": explanation,
+            "score_share": score_share_label,
+            "score_share_pct": round(score_share * 100, 1),
             "scores": scores,
             "features": features}
 
@@ -894,9 +916,9 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
 
     if h["type"] != "None":
         print(f"\n  Hysteresis Classification")
-        print(f"    Type        : {h['type']}")
-        print(f"    Confidence  : {h['confidence']} ({h['confidence_pct']:.0f}%)")
-        print(f"    Explanation : {h['explanation']}")
+        print(f"    Type         : {h['type']}")
+        print(f"    Score share  : {h['score_share']} ({h['score_share_pct']:.0f}% of total score)")
+        print(f"    Explanation  : {h['explanation']}")
         print(f"\n  Scoring:")
         for k, v in sorted(h["scores"].items(), key=lambda x: -x[1]):
             bar = "█" * v + "░" * (8 - v)

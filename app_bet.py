@@ -559,12 +559,12 @@ with tab_overview:
 
         st.markdown("**Hysteresis Classification**")
         if hyst_cls["type"] != "None":
-            conf = hyst_cls["confidence"]
-            fn = st.success if conf == "high" else st.warning if conf == "moderate" else st.error
+            share = hyst_cls["score_share"]
+            fn = st.success if share == "high" else st.warning if share == "moderate" else st.error
             fn(
                 f"**{hyst_cls['type']}**  \n"
                 f"{hyst_cls['explanation']}  \n"
-                f"Confidence: {conf} ({hyst_cls['confidence_pct']:.0f}%)"
+                f"Score share: {share} ({hyst_cls['score_share_pct']:.0f}% of total score)"
             )
         else:
             st.info("No hysteresis detected.")
@@ -1112,7 +1112,7 @@ with tab_download:
         ["BJH_peak_diam (nm)",  f"{s['rp_peak_BJH']*2:.2f}"],
         ["Isotherm type",       iso_cls["type"]],
         ["Hysteresis type",     hyst_cls["type"]],
-        ["Hysteresis conf.",    hyst_cls.get("confidence", "—")],
+        ["Hysteresis score share", hyst_cls.get("score_share", "—")],
     ]
     if use_rouquerol and rouquerol_result is not None and rouquerol_result["best"] is not None:
         best = rouquerol_result["best"]
