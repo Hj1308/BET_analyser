@@ -34,6 +34,9 @@ from rouquerol import (
     format_rouquerol_report,
 )
 
+# np.trapz was removed in NumPy 2.0 and renamed np.trapezoid
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 
 # ══════════════════════════════════════════════════════════════
 # PHYSICAL CONSTANTS — N₂ at 77 K
@@ -391,7 +394,7 @@ def classify_hysteresis(ads: np.ndarray, des: np.ndarray) -> dict:
     hyst   = np.clip(Va_d_g - Va_a_g, 0, None)
 
     # ── Feature 1: hysteresis area (normalised) ────────────────
-    hyst_area = float(np.trapz(hyst, p_grid))   # compatible with NumPy < 2.0
+    hyst_area = float(_trapezoid(hyst, p_grid))
     norm_area = hyst_area / (Va_a.max() + 1e-9)
 
     # ── Feature 2: slope ratio ─────────────────────────────────
