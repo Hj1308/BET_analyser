@@ -1143,6 +1143,6 @@ with tab_download:
     st.markdown("• **📚 Cite this tool**")
     citation = (
         "Jafari, H. (2026). BET_analyser: Publication-Quality BET/BJH + T-Plot "
-        "Analysis Tool (v2.2.0). Zenodo. DOI: 10.5281/zenodo.22099631"
+        "Analysis Tool (v2.3.0). Zenodo. DOI: 10.5281/zenodo.22099631"
     )
     st.code(citation, language=None)
