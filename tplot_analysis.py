@@ -21,8 +21,8 @@ Usage:
     As module alongside bet_analysis.py:
         from tplot_analysis import TPlotAnalyser
         tp = TPlotAnalyser(pressure, volume_adsorbed, s_bet=95.3, total_pore_volume=0.38)
-        report = tp.full_tplot_report()
-        tp.plot_tplot(save_path="tplot.png")
+        report = tp.full_tplot_report(t_min=3.5, t_max=5.0)
+        tp.plot_tplot(save_path="tplot.png", t_min=3.5, t_max=5.0)
 
 Author  : Hoda Jafari | github.com/Hj1308
 License : MIT
@@ -109,8 +109,9 @@ class TPlotAnalyser:
         """
         Fit the linear region of the t-plot.
 
-        Default range 3.5–5.0 Å is the standard IUPAC/BET linear region.
-        If fewer than 2 points fall in range, the range is auto-expanded.
+        Default range 3.5–5.0 Å is the standard IUPAC/BET linear region
+        (p/p₀ ≈ 0.08–0.30). If fewer than 2 points fall in range, the
+        range is auto-expanded.
 
         Conversion factors:
             S_ext (m²/g)    = slope × 15.47
@@ -203,9 +204,9 @@ class TPlotAnalyser:
     # FULL REPORT
     # ──────────────────────────────────────────────────────────
 
-    def full_tplot_report(self) -> dict:
+    def full_tplot_report(self, t_min: float = 3.5, t_max: float = 5.0) -> dict:
         """Run fit, pore distribution, and surface area — all together."""
-        fit  = self.fit_tplot()
+        fit  = self.fit_tplot(t_min, t_max)
         dist = self.pore_distribution(fit["V_micro_cm3g"])
         sa   = self.micropore_surface_area(fit["S_ext_m2g"])
         return {**fit, **dist, **sa}
@@ -214,8 +215,9 @@ class TPlotAnalyser:
     # PRINT REPORT
     # ──────────────────────────────────────────────────────────
 
-    def print_report(self, sample_name: str = "Sample"):
-        res = self.full_tplot_report()
+    def print_report(self, sample_name: str = "Sample",
+                     t_min: float = 3.5, t_max: float = 5.0):
+        res = self.full_tplot_report(t_min, t_max)
         sep = "=" * 55
         print(f"\n{sep}")
         print(f"  T-Plot Report (Harkins-Jura) — {sample_name}")
@@ -240,13 +242,14 @@ class TPlotAnalyser:
     # PLOT
     # ──────────────────────────────────────────────────────────
 
-    def plot_tplot(self, save_path: str = "tplot.png", sample_name: str = "Sample") -> str:
+    def plot_tplot(self, save_path: str = "tplot.png", sample_name: str = "Sample",
+                   t_min: float = 3.5, t_max: float = 5.0) -> str:
         """
         2-panel T-Plot figure:
           [A] t-plot with linear fit + region highlight
           [B] Pore type distribution bar chart
         """
-        res  = self.full_tplot_report()
+        res  = self.full_tplot_report(t_min, t_max)
         t_lo, t_hi = res["t_range"]
 
         fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
@@ -340,8 +343,9 @@ def main():
     v = np.array([85., 102.,115.,126.,135.,143.,150.,172.,200.,280.,520.])
 
     tp = TPlotAnalyser(p, v, s_bet=args.s_bet, total_pore_volume=args.vtot)
-    tp.print_report(sample_name=args.sample)
-    tp.plot_tplot(save_path=f"{args.sample}_tplot.png", sample_name=args.sample)
+    tp.print_report(sample_name=args.sample, t_min=args.t_min, t_max=args.t_max)
+    tp.plot_tplot(save_path=f"{args.sample}_tplot.png", sample_name=args.sample,
+                  t_min=args.t_min, t_max=args.t_max)
     print(f"  Plot saved → {args.sample}_tplot.png")
 
 

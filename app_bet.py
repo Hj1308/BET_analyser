@@ -747,21 +747,38 @@ with tab_tplot:
                     s_bet_tplot = rouquerol_result["best"].S_BET
                     sbet_source = "Rouquerol"
 
+            # ── Adjustable fit window ─────────────────────────────────────────
+            t_lo, t_hi = st.slider(
+                "T-Plot fit window (Å)",
+                min_value=2.5, max_value=8.0,
+                value=(3.5, 5.0), step=0.1,
+                help=("Standard de Boer window: 3.5–5.0 Å "
+                      "(p/p₀ ≈ 0.08–0.30 for Harkins–Jura). "
+                      "Widen only if too few measured points fall inside; "
+                      "above ~5.5 Å you risk entering capillary condensation."),
+            )
+            if t_hi > 5.5:
+                st.warning(
+                    "⚠ Window extends above 5.5 Å (p/p₀ ≳ 0.37) — risk of "
+                    "including capillary condensation (upward curvature at high t). "
+                    "Verify the fitted points stay linear."
+                )
+
             tp = TPlotAnalyser(
                 pressure          = data["ads"][:, 0],
                 volume_adsorbed   = data["ads"][:, 1],
                 s_bet             = s_bet_tplot,
                 total_pore_volume = s["Vp_total"],
             )
-            res = tp.full_tplot_report()
+            res = tp.full_tplot_report(t_min=t_lo, t_max=t_hi)
 
             # ── Consistency warnings ──────────────────────────────────────────
             if res["n_points"] < 5:
                 st.warning(
                     f"⚠ T-Plot fit uses only **{res['n_points']} points** in the "
                     f"{res['t_range'][0]}–{res['t_range'][1]} Å window — R² is not "
-                    "meaningful with fewer than ~5 points. For publication, measure "
-                    "more points in p/p₀ ≈ 0.08–0.30."
+                    "meaningful with fewer than ~5 points. Widen the window above "
+                    "or measure more points in p/p₀ ≈ 0.08–0.30."
                 )
             if res["S_ext_m2g"] > res["S_BET_m2g"]:
                 over_pct = ((res["S_ext_m2g"] - res["S_BET_m2g"])
@@ -796,7 +813,8 @@ with tab_tplot:
                 )
             with col_t2:
                 buf = io.BytesIO()
-                tp.plot_tplot(save_path=buf, sample_name=sample_name)
+                tp.plot_tplot(save_path=buf, sample_name=sample_name,
+                              t_min=t_lo, t_max=t_hi)
                 buf.seek(0)
                 st.image(buf, use_container_width=True)
         except ImportError:
