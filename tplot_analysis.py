@@ -198,10 +198,20 @@ BEND_2T_MIN_NM = 0.7
 LINE1_P_MIN = 0.005
 LINE1_T_MIN = 2.4     # rounded Harkins-Jura t at LINE1_P_MIN; used as a UI floor
 
-# Data-sufficiency gate: line 1 needs at least this many adsorption points in
-# the micropore region p/p0 < LINE1_P_MAX, else micropore analysis is refused.
+# Data-sufficiency gate (two layered). Line 1 needs enough adsorption points in
+# the micropore region p/p0 < LINE1_P_MAX, AND at least one in the *primary*
+# filling region p/p0 < LINE1_P_PRIMARY.
 MIN_LINE1_POINTS = 3
 LINE1_P_MAX = 0.08
+
+# Thommes et al. (2015) §6.1 distinguishes primary micropore filling (very low
+# p/p0) from the secondary filling of wider micropores over p/p0 ~ 0.01-0.15;
+# Cychosz & Thommes (2018) §3 place micropore filling below p/p0 ~ 0.015.
+# Points between 0.015 and 0.08 sample only the wider range and do not carry
+# the steep primary-filling slope that line 1 must measure, so a count below
+# 0.08 alone is not sufficient.
+LINE1_P_PRIMARY = 0.015
+MIN_LINE1_PRIMARY_POINTS = 1
 
 
 def line1_t_min(reference_curve: str) -> float:
@@ -544,12 +554,14 @@ class TPlotAnalyser:
         micropore-filling region; line 2 is confined to
         ``[HJ_VALID_T_MIN, HJ_VALID_T_MAX]``.
 
-        A data-sufficiency gate runs first: if the adsorption data has fewer
-        than ``MIN_LINE1_POINTS`` points below p/p0 = ``LINE1_P_MAX``, the
-        micropore quantities (V_micro, S_micro, S_total, t_bend, 2t) cannot be
-        determined and are returned as ``None`` with
-        ``micropore_analysis_possible`` False; only the external surface area
-        (line 2) is reported in that case.
+        A two-layer data-sufficiency gate runs first: micropore analysis is
+        possible only when the adsorption data has at least ``MIN_LINE1_POINTS``
+        points below p/p0 = ``LINE1_P_MAX`` AND at least
+        ``MIN_LINE1_PRIMARY_POINTS`` point below the primary-filling bound
+        ``LINE1_P_PRIMARY``. If either fails, the micropore quantities (V_micro,
+        S_micro, S_total, t_bend, 2t) cannot be determined and are returned as
+        ``None`` with ``micropore_analysis_possible`` False; only the external
+        surface area (line 2) is reported in that case.
 
         Returns the dict from :func:`fit_two_segment` (or a line-2-only dict)
         plus ``reference_curve``, ``S_BET_m2g``, the sufficiency-gate keys and
@@ -560,7 +572,10 @@ class TPlotAnalyser:
         t_max = min(float(t_max), HJ_VALID_T_MAX)
 
         n_below = int((self.p < LINE1_P_MAX).sum())
-        gate_passed = n_below >= MIN_LINE1_POINTS
+        n_primary = int((self.p < LINE1_P_PRIMARY).sum())
+        enough_below = n_below >= MIN_LINE1_POINTS
+        enough_primary = n_primary >= MIN_LINE1_PRIMARY_POINTS
+        gate_passed = enough_below and enough_primary
 
         if gate_passed:
             fit = fit_two_segment(self.t, self.v, t_min, t_max,
@@ -598,16 +613,32 @@ class TPlotAnalyser:
         result["S_BET_m2g"] = round(self.sbet, 2)
         result["micropore_analysis_possible"] = gate_passed
         result["n_points_below_pp008"] = n_below
-        result["micropore_analysis_reason"] = (
-            "" if gate_passed else
-            f"only {n_below} adsorption point(s) below p/p0 = 0.08 (need at "
-            f"least {MIN_LINE1_POINTS}); micropore volume and surface area "
-            "cannot be determined from this measurement. A t-plot micropore "
-            "analysis needs more points below p/p0 = 0.08, ideally down to "
-            "1e-3 or lower (Thommes et al. 2015 §6.1), which also recommends "
-            "argon at 87 K over nitrogen at 77 K where surface functional "
-            "groups interact with the N2 quadrupole."
-        )
+        result["n_points_below_pp0015"] = n_primary
+
+        if gate_passed:
+            result["micropore_analysis_reason"] = ""
+        else:
+            failed = []
+            if not enough_below:
+                failed.append(
+                    f"only {n_below} point(s) below p/p0 = 0.08 "
+                    f"(need at least {MIN_LINE1_POINTS})"
+                )
+            if not enough_primary:
+                failed.append(
+                    f"only {n_primary} point(s) below p/p0 = 0.015 "
+                    f"(need at least {MIN_LINE1_PRIMARY_POINTS})"
+                )
+            result["micropore_analysis_reason"] = (
+                "micropore volume and surface area cannot be determined from "
+                "this measurement (" + "; ".join(failed) + "). A t-plot "
+                "micropore analysis needs at least one point below "
+                "p/p0 ≈ 0.015 and ideally several down to 1e-3 or lower, to "
+                "sample the primary micropore-filling region (Thommes et al. "
+                "2015 §6.1; Cychosz & Thommes 2018 §3). §6.1 also recommends "
+                "argon at 87 K over nitrogen at 77 K where surface functional "
+                "groups interact with the N2 quadrupole."
+            )
         # Compatibility keys (Phase 1A naming) — S_ext is now the *external*
         # area from line 2, not the old single-line slope.
         result["S_ext_m2g"] = result["S_external_m2g"]

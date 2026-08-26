@@ -994,7 +994,7 @@ with tab_tplot:
     else:
         st.subheader("T-Plot Micropore Analysis")
         try:
-            from tplot_analysis import TPlotAnalyser, LINE1_T_MIN
+            from tplot_analysis import TPlotAnalyser, LINE1_T_MIN, HJ_VALID_T_MAX
 
             # ── S_BET source for the decomposition ────────────────────────────
             s_bet_tplot = s["S_BET"]
@@ -1016,11 +1016,11 @@ with tab_tplot:
             t_lo, t_hi = st.slider(
                 "T-Plot fit window (Å)",
                 min_value=LINE1_T_MIN, max_value=8.0,
-                value=(3.5, 6.5), step=0.1,
-                help=("Two-segment t-plot window. Line 1 (total surface area) "
-                      "can reach down to LINE1_T_MIN (micropore filling, "
-                      "p/p₀ ≈ 0.005); line 2 (external + micropore volume) is "
-                      "kept inside the Harkins-Jura validity range 3.5–6.5 Å."),
+                value=(LINE1_T_MIN, HJ_VALID_T_MAX), step=0.1,
+                help=("Two-segment t-plot window. The default spans line 1's "
+                      "floor (LINE1_T_MIN, micropore filling, p/p₀ ≈ 0.005) to "
+                      "line 2's ceiling (HJ_VALID_T_MAX); line 2 is kept inside "
+                      "the Harkins-Jura validity range 3.5–6.5 Å."),
             )
 
             tp = TPlotAnalyser(
