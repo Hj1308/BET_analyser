@@ -161,6 +161,9 @@ class TPlotAnalyser:
         ValueError
             If fewer than 3 points are available even after auto-expansion.
         """
+        t_min_requested = float(t_min)
+        t_max_requested = float(t_max)
+
         mask = (self.t >= t_min) & (self.t <= t_max)
         expanded = False
         if mask.sum() < 3:
@@ -197,9 +200,9 @@ class TPlotAnalyser:
             low_confidence_reasons.append("only 3 points in fit window")
         if expanded:
             low_confidence_reasons.append("fit window was auto-expanded")
-        if t_max > HJ_VALID_T_MAX:
+        if t_min_requested < HJ_VALID_T_MIN or t_max_requested > HJ_VALID_T_MAX:
             low_confidence_reasons.append(
-                "window extends above the Harkins-Jura validity ceiling"
+                "requested window outside Harkins-Jura validity range"
             )
         low_confidence = bool(low_confidence_reasons)
         low_confidence_reason = "; ".join(low_confidence_reasons)
