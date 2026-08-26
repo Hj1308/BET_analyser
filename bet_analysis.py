@@ -364,8 +364,12 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
         y_l = Va_a[low_mask]
         d2  = np.gradient(np.gradient(y_l, x_l), x_l)
         concave_low = float(d2.mean()) < 0
+        concave_low_measured = True
     else:
+        # Fewer than 3 points below p/p0 = 0.35: concavity is defaulted, not
+        # measured. Mark it so the classification can refuse to guess.
         concave_low = True
+        concave_low_measured = False
 
     # -- Plateau check at high p/p0 ------------------------------
     high_mask = pp0_a > 0.75
@@ -440,7 +444,7 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
                 explanation = ("Steep rise extending to p/p₀ ~ 0.1 — indicates "
                                "micropores in range 1–2.5 nm plus possibly narrow "
                                "mesopores. Common in MOFs and hierarchical carbons.")
-        elif concave_low:
+        elif concave_low and concave_low_measured:
             # Type II = unrestricted monolayer–multilayer adsorption: uptake
             # rises without limit as p/p0 -> 1, so a plateau is not required
             # (a genuine Type II has none). ``concave_low and has_plateau``
@@ -448,20 +452,25 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
             # still a strong-interaction multilayer isotherm, not Type III.
             iso_type = "Type II"
             explanation = ("Concave at low p/p₀ — strong adsorbate–adsorbent "
-                           "interaction. Non-porous or macroporous material "
-                           "with unrestricted mono- to multilayer adsorption.")
+                           "interaction. Unrestricted monolayer–multilayer "
+                           "adsorption whose thickness increases without limit "
+                           "as p/p0 → 1. Characteristic of nonporous or "
+                           "macroporous adsorbents; the same adsorption-branch "
+                           "shape is also carried by non-rigid plate-like "
+                           "aggregates, where it is accompanied by an H3 "
+                           "hysteresis loop (Thommes et al. 2015 §4.2, §4.3.2).")
         elif not concave_low:
             iso_type = "Type III"
             explanation = ("Convex throughout. Weak adsorbate–adsorbent "
                            "interactions, multilayer adsorption.")
         else:
-            # Defensive fallback — should be unreachable (concave_low is a
-            # bool), but Type III is deliberately not the catch-all.
+            # concave_low was defaulted to True because fewer than 3 points
+            # lie below p/p0 = 0.35 — the concavity is a guess, not a
+            # measurement, so we decline to classify.
             iso_type = "Unclassified"
-            explanation = (f"Shape could not be classified confidently "
-                           f"(concave_low={concave_low}, "
-                           f"has_plateau={has_plateau}, "
-                           f"steep_init={steep_init}).")
+            explanation = ("Concavity at low p/p₀ could not be measured "
+                           "(fewer than 3 points below p/p0 = 0.35), so the "
+                           "isotherm cannot be classified confidently.")
 
     return {"type": iso_type, "explanation": explanation,
             "has_hysteresis": has_condensation_loop,
