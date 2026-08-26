@@ -81,6 +81,20 @@ def harkins_jura_t(p_rel: np.ndarray) -> np.ndarray:
     return np.sqrt(13.99 / (0.034 - np.log10(p_rel)))
 
 
+# The Harkins-Jura film thickness is stated valid for 0.08 < p/p0 < 0.60
+# (see harkins_jura_t above). Auto-expansion of the t-plot fit window must not
+# cross that boundary:
+#   - below p/p0 = 0.08, micropore filling is still in progress, which is
+#     exactly the regime a multilayer t-plot fit must avoid. p/p0 = 0.08
+#     corresponds to t = 3.52 Å; 3.5 Å is the rounded floor and coincides with
+#     the default window's lower edge.
+#   - above p/p0 = 0.60, the thickness grows rapidly and the isotherm enters
+#     the capillary-condensation region, where a linear t-plot is undefined.
+#     6.5 Å is the conservative ceiling (p/p0 ≈ 0.5, safely inside the range).
+HJ_VALID_T_MIN = 3.5
+HJ_VALID_T_MAX = 6.5
+
+
 # ══════════════════════════════════════════════════════════════
 # T-PLOT ANALYSER CLASS
 # ══════════════════════════════════════════════════════════════
@@ -114,8 +128,12 @@ class TPlotAnalyser:
 
         Default range 3.5–5.0 Å is the standard IUPAC/BET linear region
         (p/p₀ ≈ 0.08–0.30). If fewer than 3 points fall in range, the
-        range is auto-expanded; if it still has fewer than 3 points a
-        ValueError is raised (a 2-point fit has R² = 1.0 by construction).
+        range is auto-expanded, but both ends are clamped to the Harkins-Jura
+        validity window ``[HJ_VALID_T_MIN, HJ_VALID_T_MAX]`` so the fit never
+        enters the micropore-filling region (below) or the capillary-
+        condensation region (above). If the bounded expansion still has fewer
+        than 3 points a ValueError is raised (a 2-point fit has R² = 1.0 by
+        construction).
 
         Conversion factors:
             S_ext (m²/g)    = slope × N2_TPLOT_SLOPE_FACTOR
@@ -127,22 +145,33 @@ class TPlotAnalyser:
         dict with:
             S_ext_m2g     — external (mesopore) surface area  (m²/g)
             V_micro_cm3g  — micropore volume  (cm³/g)
+            V_micro_raw_cm3g — micropore volume before clamping (cm³/g)
             R2_tplot      — R² of linear fit
             slope         — raw regression slope
             intercept     — raw regression intercept
             t_range       — (t_min, t_max) actually used
             n_points      — number of points fitted
-            low_confidence— True when exactly 3 points were fitted
+            window_expanded — True if the window was auto-expanded
+            low_confidence— True when the fit should be treated cautiously
+                            (fewer than 4 points, or the requested / final
+                            window lies outside the Harkins-Jura validity
+                            range)
+            low_confidence_reason — human-readable reason for the flag
 
         Raises
         ------
         ValueError
             If fewer than 3 points are available even after auto-expansion.
         """
+        t_min_requested = float(t_min)
+        t_max_requested = float(t_max)
+
         mask = (self.t >= t_min) & (self.t <= t_max)
+        expanded = False
         if mask.sum() < 3:
-            t_min = float(self.t.min()) + 0.2
-            t_max = float(self.t.max()) - 0.2
+            expanded = True
+            t_min = max(float(self.t.min()) + 0.2, HJ_VALID_T_MIN)
+            t_max = min(float(self.t.max()) - 0.2, HJ_VALID_T_MAX)
             mask  = (self.t >= t_min) & (self.t <= t_max)
 
         n_points = int(mask.sum())
@@ -168,16 +197,32 @@ class TPlotAnalyser:
                 stacklevel=2,
             )
 
+        low_confidence_reasons = []
+        if n_points < 4:
+            low_confidence_reasons.append("fewer than 4 points in fit window")
+        if t_min_requested < HJ_VALID_T_MIN or t_max_requested > HJ_VALID_T_MAX:
+            low_confidence_reasons.append(
+                "requested window outside Harkins-Jura validity range"
+            )
+        if t_min < HJ_VALID_T_MIN or t_max > HJ_VALID_T_MAX:
+            low_confidence_reasons.append(
+                "final window outside Harkins-Jura validity range"
+            )
+        low_confidence = bool(low_confidence_reasons)
+        low_confidence_reason = "; ".join(low_confidence_reasons)
+
         return {
             "S_ext_m2g"     : round(s_ext,   2),
             "V_micro_cm3g"  : round(v_micro, 5),
+            "V_micro_raw_cm3g": round(v_micro_raw, 6),
             "R2_tplot"      : round(r ** 2,  5),
             "slope"         : round(slope,   5),
             "intercept"     : round(intercept, 5),
-            "intercept_raw" : round(intercept, 5),
             "t_range"       : (round(t_min, 2), round(t_max, 2)),
             "n_points"      : n_points,
-            "low_confidence": n_points == 3,
+            "window_expanded": expanded,
+            "low_confidence": low_confidence,
+            "low_confidence_reason": low_confidence_reason,
             "clamped"       : clamped,
         }
 
