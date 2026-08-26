@@ -81,6 +81,15 @@ def harkins_jura_t(p_rel: np.ndarray) -> np.ndarray:
     return np.sqrt(13.99 / (0.034 - np.log10(p_rel)))
 
 
+# The Harkins-Jura film thickness is stated valid for 0.08 < p/p0 < 0.60
+# (see harkins_jura_t above). Auto-expansion of the t-plot fit window must not
+# cross that boundary: above it the thickness grows rapidly and the isotherm
+# enters the capillary-condensation region, where a linear t-plot is undefined.
+# 6.5 Å is the conservative ceiling used to clamp the expansion's t_max — it
+# corresponds to p/p0 ≈ 0.5, safely inside the valid range.
+HJ_VALID_T_MAX = 6.5
+
+
 # ══════════════════════════════════════════════════════════════
 # T-PLOT ANALYSER CLASS
 # ══════════════════════════════════════════════════════════════
@@ -114,7 +123,10 @@ class TPlotAnalyser:
 
         Default range 3.5–5.0 Å is the standard IUPAC/BET linear region
         (p/p₀ ≈ 0.08–0.30). If fewer than 3 points fall in range, the
-        range is auto-expanded; if it still has fewer than 3 points a
+        range is auto-expanded, but its upper end is clamped to
+        ``HJ_VALID_T_MAX`` so the fit never crosses the Harkins-Jura
+        validity ceiling (p/p₀ ≈ 0.60) into the capillary-condensation
+        region. If the bounded expansion still has fewer than 3 points a
         ValueError is raised (a 2-point fit has R² = 1.0 by construction).
 
         Conversion factors:
@@ -132,7 +144,10 @@ class TPlotAnalyser:
             intercept     — raw regression intercept
             t_range       — (t_min, t_max) actually used
             n_points      — number of points fitted
-            low_confidence— True when exactly 3 points were fitted
+            low_confidence— True when the fit should be treated cautiously
+                            (few points, window auto-expanded, or window
+                            outside the Harkins-Jura validity range)
+            low_confidence_reason — human-readable reason for the flag
 
         Raises
         ------
@@ -140,9 +155,11 @@ class TPlotAnalyser:
             If fewer than 3 points are available even after auto-expansion.
         """
         mask = (self.t >= t_min) & (self.t <= t_max)
+        expanded = False
         if mask.sum() < 3:
+            expanded = True
             t_min = float(self.t.min()) + 0.2
-            t_max = float(self.t.max()) - 0.2
+            t_max = min(float(self.t.max()) - 0.2, HJ_VALID_T_MAX)
             mask  = (self.t >= t_min) & (self.t <= t_max)
 
         n_points = int(mask.sum())
@@ -168,6 +185,18 @@ class TPlotAnalyser:
                 stacklevel=2,
             )
 
+        low_confidence_reasons = []
+        if n_points == 3:
+            low_confidence_reasons.append("only 3 points in fit window")
+        if expanded:
+            low_confidence_reasons.append("fit window was auto-expanded")
+        if t_max > HJ_VALID_T_MAX:
+            low_confidence_reasons.append(
+                "window extends above the Harkins-Jura validity ceiling"
+            )
+        low_confidence = bool(low_confidence_reasons)
+        low_confidence_reason = "; ".join(low_confidence_reasons)
+
         return {
             "S_ext_m2g"     : round(s_ext,   2),
             "V_micro_cm3g"  : round(v_micro, 5),
@@ -177,7 +206,8 @@ class TPlotAnalyser:
             "intercept_raw" : round(intercept, 5),
             "t_range"       : (round(t_min, 2), round(t_max, 2)),
             "n_points"      : n_points,
-            "low_confidence": n_points == 3,
+            "low_confidence": low_confidence,
+            "low_confidence_reason": low_confidence_reason,
             "clamped"       : clamped,
         }
 
