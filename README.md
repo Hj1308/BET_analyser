@@ -183,9 +183,11 @@ and the Gurvich-rule total pore volume being invalid without a high-p/p₀ plate
 (Thommes et al. 2015 §5.1.1, §5.2.2, §7.1, §7.2, §9).
 
 A t-plot **micropore** analysis additionally requires adsorption points below
-**p/p₀ ≈ 0.015** (ideally several down to 1e-3) to sample the primary micropore-
-filling region; if the measurement lacks them, the tool refuses to report a
-micropore volume rather than printing `0.0` (Thommes et al. 2015 §6.1).
+**p/p₀ ≈ 0.015**, ideally several lower still — check the instrument's
+low-pressure specification and measurement-range setting. If the measurement
+lacks them, the tool refuses to report a micropore volume rather than printing
+`0.0` (Thommes et al. 2015 §6.1). BJH is valid only above ~2 nm pore diameter;
+below that, HK/SF or DFT methods are required (Thommes et al. 2015 §7.2, §9).
 
 ---
 
