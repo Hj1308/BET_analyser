@@ -1015,25 +1015,20 @@ with tab_tplot:
             # ── Adjustable fit window ─────────────────────────────────────────
             t_lo, t_hi = st.slider(
                 "T-Plot fit window (Å)",
-                min_value=2.5, max_value=8.0,
-                value=(3.5, 5.0), step=0.1,
-                help=("Standard de Boer window: 3.5–5.0 Å "
-                      "(p/p₀ ≈ 0.08–0.30 for Harkins–Jura). "
-                      "Widen only if too few measured points fall inside; "
-                      "above ~5.5 Å you risk entering capillary condensation."),
+                min_value=3.5, max_value=6.5,
+                value=(3.5, 6.5), step=0.1,
+                help=("Two-segment t-plot window. Kept inside the Harkins-Jura "
+                      "validity range 3.5–6.5 Å (p/p₀ ≈ 0.08–0.60): line 1 "
+                      "(total surface area) is fit to the low-t part, line 2 "
+                      "(external + micropore volume) to the high-t part."),
             )
-            if t_hi > 5.5:
-                st.warning(
-                    "⚠ Window extends above 5.5 Å (p/p₀ ≳ 0.37) — risk of "
-                    "including capillary condensation (upward curvature at high t). "
-                    "Verify the fitted points stay linear."
-                )
 
             tp = TPlotAnalyser(
                 pressure          = data["ads"][:, 0],
                 volume_adsorbed   = data["ads"][:, 1],
                 s_bet             = s_bet_tplot,
                 total_pore_volume = s["Vp_total"],
+                c_constant        = s["C"],
             )
             res = tp.full_tplot_report(t_min=t_lo, t_max=t_hi)
 
@@ -1061,21 +1056,29 @@ with tab_tplot:
             with col_t1:
                 st.markdown("**T-Plot Results**")
                 st.table(pd.DataFrame({
-                    "Parameter": ["S_BET", "S_ext", "S_micro", "V_micro", "V_meso"],
+                    "Parameter": ["S_BET", "S_total", "S_ext", "S_micro",
+                                  "V_micro", "V_meso", "2t (mean pore Ø)"],
                     "Value": [
                         f"{res['S_BET_m2g']:.2f}",
+                        f"{res['S_total_m2g']:.2f}",
                         f"{res['S_ext_m2g']:.2f}",
                         f"{res['S_micro_m2g']:.2f}",
                         f"{res['V_micro_cm3g']:.4f}",
                         f"{res['V_meso_cm3g']:.4f}",
+                        f"{res['2t_nm']:.3f}" if res["2t_nm"] is not None else "—",
                     ],
-                    "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "cm³ g⁻¹", "cm³ g⁻¹"],
+                    "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "m² g⁻¹",
+                             "cm³ g⁻¹", "cm³ g⁻¹", "nm"],
                 }))
                 st.caption(
                     f"S_BET source: **{sbet_source}** · "
                     f"Fit range: {res['t_range'][0]}–{res['t_range'][1]} Å "
-                    f"({res['n_points']} pts) · R² = {res['R2_tplot']:.5f}"
+                    f"({res['n_points']} pts) · reference: {res['reference_curve']}"
                 )
+                if res.get("warnings"):
+                    st.warning("⚠ " + "; ".join(res["warnings"]))
+                if res.get("low_confidence"):
+                    st.info(f"Low confidence: {res['low_confidence_reason']}")
             with col_t2:
                 buf = io.BytesIO()
                 tp.plot_tplot(save_path=buf, sample_name=sample_name,
