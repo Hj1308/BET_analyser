@@ -34,6 +34,7 @@ from rouquerol import (
     diagnose_instrument_range,
     format_rouquerol_report,
 )
+from langmuir import fit_langmuir_window, format_langmuir_report
 
 # np.trapz was removed in NumPy 2.0 and renamed np.trapezoid
 _trapezoid = getattr(np, "trapezoid", None) or np.trapz
@@ -1074,6 +1075,9 @@ def main():
                         help="Do not write the PNG file")
     parser.add_argument("--rouquerol", action="store_true",
                         help="Run Rouquerol auto BET range selection")
+    parser.add_argument("--langmuir", action="store_true",
+                        help="Run Langmuir surface-area analysis on the "
+                             "adsorption branch (default window 0.05-0.30)")
     args = parser.parse_args()
 
     print(f"\n  Reading: {args.file}")
@@ -1085,8 +1089,42 @@ def main():
                           ads=data["ads"] if args.rouquerol else None)
 
     print_report(data, iso_cls, hyst_cls, bet_res, args.sample)
+
+    if args.langmuir:
+        _print_langmuir(data, iso_cls, args.sample)
+
     plot_all(data, iso_cls, hyst_cls, bet_res, args.sample,
              save=not args.no_save, show=not args.no_show)
+
+
+def _print_langmuir(data: dict, iso_cls: dict, sample_name: str):
+    """Run and print the Langmuir report for the CLI's ``--langmuir`` flag.
+
+    Uses the conservative 0.05-0.30 window; if it holds fewer than
+    ``MIN_LANGMUIR_POINTS`` points the fit raises ValueError, which is reported
+    as a note rather than a traceback.
+    """
+    p_ads = data["ads"][:, 0]
+    n_ads = data["ads"][:, 1]
+
+    lo = max(0.05, float(p_ads.min()))
+    hi = min(0.30, float(p_ads.max()))
+    mask = (p_ads >= lo - 1e-9) & (p_ads <= hi + 1e-9)
+    p_sel = p_ads[mask]
+    n_sel = n_ads[mask]
+
+    try:
+        result = fit_langmuir_window(
+            p_sel, n_sel,
+            has_hysteresis=iso_cls["has_hysteresis"],
+            has_plateau=iso_cls["has_plateau"],
+            S_BET=data["summary"]["S_BET"],
+        )
+    except ValueError as e:
+        print(f"\n  Langmuir: skipped — {e}")
+        return
+
+    print(f"\n{format_langmuir_report(result, sample_name)}")
 
 
 if __name__ == "__main__":
