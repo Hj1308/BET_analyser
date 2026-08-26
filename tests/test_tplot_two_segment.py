@@ -16,6 +16,7 @@ import pytest
 from tplot_analysis import (
     N2_TPLOT_SLOPE_FACTOR,
     N2_STP_TO_LIQUID,
+    TPlotAnalyser,
     fit_two_segment,
 )
 
@@ -95,7 +96,7 @@ def test_convex_isotherm_flags_slope_intercept_and_area():
 
 def test_small_bend_flags_unreliable_diameter():
     # A bend at t_bend = 3.2 A gives 2t = 0.64 nm < 0.7 nm -> unreliable.
-    # The window extends below the default floor so line 1 has >= 3 points.
+    # The window and split floor extend below 3.5 A so the split can sit at 3.2.
     slope1 = 8.0
     slope2 = 3.0
     t_bend = 3.2
@@ -103,11 +104,26 @@ def test_small_bend_flags_unreliable_diameter():
     v = _two_segment(t, slope1, slope2, t_bend)
 
     with pytest.warns(UserWarning, match="2t"):
-        r = fit_two_segment(t, v, 2.5, 6.5)
+        r = fit_two_segment(t, v, 2.5, 6.5, split_t_min=2.5)
 
     assert r["flags"]["bend_ok"] is False
     assert "2t < 0.7 nm" in r["warnings"]
     assert r["2t_nm"] < 0.7
+
+
+def test_split_floor_confines_line2():
+    # With split_t_min at the Harkins-Jura floor, the split never puts a point
+    # below 3.5 A into line 2.
+    slope1 = 8.0
+    slope2 = 3.0
+    t_bend = 4.5
+    t = _grid(t_min=2.5, t_max=6.5, n=40)
+    v = _two_segment(t, slope1, slope2, t_bend)
+
+    r = fit_two_segment(t, v, 2.5, 6.5, split_t_min=3.5)
+    # the split index sits at or above the floor
+    assert t[r["split_index"]] >= 3.5
+    assert r["n_points_1"] >= 3 and r["n_points_2"] >= 3
 
 
 def test_too_few_points_raises():
@@ -116,3 +132,37 @@ def test_too_few_points_raises():
     v = 5.0 * t
     with pytest.raises(ValueError, match="at least 6 points"):
         fit_two_segment(t, v, 3.5, 6.5)
+
+
+def test_sufficiency_gate_refuses_micropore_when_undersampled():
+    # Only 2 adsorption points below p/p0 = 0.08 -> micropore quantities are
+    # returned as None (never 0.0) and the reason names the required region.
+    p = np.array([0.05, 0.06, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+    v = np.linspace(5.0, 100.0, len(p))
+    tp = TPlotAnalyser(p, v, s_bet=100.0, total_pore_volume=0.3)
+
+    r = tp.full_tplot_report()
+
+    assert r["micropore_analysis_possible"] is False
+    assert r["n_points_below_pp008"] == 2
+    assert r["V_micro_cm3g"] is None
+    assert r["S_total_m2g"] is None
+    assert r["S_micro_m2g"] is None
+    assert r["t_bend_A"] is None
+    assert r["2t_nm"] is None
+    # external area is still reported from line 2
+    assert r["S_external_m2g"] is not None
+    assert "p/p0 = 0.08" in r["micropore_analysis_reason"]
+
+
+def test_sufficiency_gate_passes_with_enough_low_pressure_points():
+    p = np.array([0.001, 0.01, 0.03, 0.06, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+    v = np.linspace(2.0, 100.0, len(p))
+    tp = TPlotAnalyser(p, v, s_bet=100.0, total_pore_volume=0.3)
+
+    r = tp.full_tplot_report()
+
+    assert r["micropore_analysis_possible"] is True
+    assert r["V_micro_cm3g"] is not None
+    assert r["S_total_m2g"] is not None
+    assert r["t_bend_A"] is not None
