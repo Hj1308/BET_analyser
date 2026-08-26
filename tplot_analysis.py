@@ -151,9 +151,11 @@ class TPlotAnalyser:
             intercept     — raw regression intercept
             t_range       — (t_min, t_max) actually used
             n_points      — number of points fitted
+            window_expanded — True if the window was auto-expanded
             low_confidence— True when the fit should be treated cautiously
-                            (few points, window auto-expanded, or window
-                            outside the Harkins-Jura validity range)
+                            (fewer than 4 points, or the requested / final
+                            window lies outside the Harkins-Jura validity
+                            range)
             low_confidence_reason — human-readable reason for the flag
 
         Raises
@@ -196,13 +198,15 @@ class TPlotAnalyser:
             )
 
         low_confidence_reasons = []
-        if n_points == 3:
-            low_confidence_reasons.append("only 3 points in fit window")
-        if expanded:
-            low_confidence_reasons.append("fit window was auto-expanded")
+        if n_points < 4:
+            low_confidence_reasons.append("fewer than 4 points in fit window")
         if t_min_requested < HJ_VALID_T_MIN or t_max_requested > HJ_VALID_T_MAX:
             low_confidence_reasons.append(
                 "requested window outside Harkins-Jura validity range"
+            )
+        if t_min < HJ_VALID_T_MIN or t_max > HJ_VALID_T_MAX:
+            low_confidence_reasons.append(
+                "final window outside Harkins-Jura validity range"
             )
         low_confidence = bool(low_confidence_reasons)
         low_confidence_reason = "; ".join(low_confidence_reasons)
@@ -216,6 +220,7 @@ class TPlotAnalyser:
             "intercept"     : round(intercept, 5),
             "t_range"       : (round(t_min, 2), round(t_max, 2)),
             "n_points"      : n_points,
+            "window_expanded": expanded,
             "low_confidence": low_confidence,
             "low_confidence_reason": low_confidence_reason,
             "clamped"       : clamped,
