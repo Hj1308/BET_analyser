@@ -750,6 +750,8 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
 
     if show:
         plt.show()
+    else:
+        plt.close(fig)
 
 
 def _label_panel(ax, letter):
