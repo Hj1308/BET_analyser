@@ -23,6 +23,8 @@ from bet_analysis import (
     verify_bet,
     plot_all,
     setup_plot_style,
+    validity_warnings,
+    BJH_NARROW_MESOPORE_NM,
     C_ADS, C_DES, C_BET, C_BJH, C_CUM, N2_CAVITATION_NM,
 )
 from rouquerol import (
@@ -601,6 +603,9 @@ with tab_overview:
     )
     st.markdown(tag, unsafe_allow_html=True)
 
+    for note in validity_warnings(s, iso_cls):
+        st.warning(note)
+
     # ── Rouquerol summary on overview ─────────────────────────────────────────────
     if use_rouquerol and rouquerol_result is not None:
         best = rouquerol_result["best"]
@@ -940,6 +945,14 @@ with tab_rouquerol:
 # ── TAB 5: BJH / PSD ─────────────────────────────────────────────────────────────────
 with tab_bjh:
     st.subheader("BJH Pore Size Distribution")
+
+    peak_diam = s["rp_peak_BJH"] * 2.0
+    if peak_diam < BJH_NARROW_MESOPORE_NM:
+        st.warning(
+            f"⚠ BJH peak diameter {peak_diam:.1f} nm is below 10 nm — "
+            "Kelvin-equation (BJH) procedures underestimate narrow mesopore "
+            "size by ~20-30% (Thommes et al. 2015 §7.2, §9)."
+        )
 
     bjh = data["bjh"]
     # Instrument headers verified as radius ("rp/nm") and per-radius

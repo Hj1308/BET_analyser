@@ -52,6 +52,19 @@ N2_CAVITATION_NM      = 3.4     # forced closure diameter (nm) for N₂ at 77 K
 
 
 # ══════════════════════════════════════════════════════════════
+# IUPAC VALIDITY THRESHOLDS — Thommes et al. (2015)
+# ══════════════════════════════════════════════════════════════
+
+# §5.1.1 — BET C constant and Point B.
+BET_C_NOT_APPLICABLE      = 2.0    # C < 2  : Type III/V — BET not applicable
+BET_C_POINT_B_QUESTIONABLE = 50.0  # C < 50 : Point B not a single point; n_m doubtful
+BET_C_KNEE_SHARP          = 80.0   # C >= 80: sharp knee, Point B well defined
+
+# §7.2 / §9 — BJH (Kelvin-equation) underestimates narrow mesopores by 20-30%.
+BJH_NARROW_MESOPORE_NM    = 10.0   # peak diameter (nm) below which BJH is unreliable
+
+
+# ══════════════════════════════════════════════════════════════
 # MATPLOTLIB — publication settings
 # ══════════════════════════════════════════════════════════════
 
@@ -895,6 +908,54 @@ def _label_panel(ax, letter):
 # 6. SUMMARY REPORT
 # ══════════════════════════════════════════════════════════════
 
+def validity_warnings(s: dict, iso_cls: dict) -> list:
+    """IUPAC-validity warnings for the reported quantities (Thommes et al. 2015).
+
+    Report-text only: returns strings for display and never alters a computed
+    value. ``s`` is the instrument ``summary`` dict from :func:`read_bet_xls`;
+    ``iso_cls`` is the result of :func:`classify_isotherm`.
+    """
+    notes = []
+    C = s.get("C", np.nan)
+    iso_type = iso_cls.get("type", "")
+
+    # §5.1.1 — BET C constant and Point B.
+    if np.isfinite(C):
+        if C < BET_C_NOT_APPLICABLE:
+            notes.append("BET C < 2 — the isotherm is Type III/V and the BET "
+                         "method is not applicable (Thommes et al. 2015 §5.1.1).")
+        elif C < BET_C_POINT_B_QUESTIONABLE:
+            notes.append("BET C < 50 — Point B cannot be identified as a single "
+                         "point and the interpretation of n_m is questionable "
+                         "(Thommes et al. 2015 §5.1.1).")
+        elif C >= BET_C_KNEE_SHARP:
+            notes.append("BET C ≥ 80 — the knee is sharp and Point B is well "
+                         "defined (Thommes et al. 2015 §5.1.1).")
+
+    # §5.2.2 / §5.1.1 — Type I BET area is an apparent area.
+    if iso_type in ("Type I(a)", "Type I(b)"):
+        notes.append("Type I isotherm — the BET area is an apparent surface "
+                     "area (an adsorbent 'fingerprint'), not a realistic "
+                     "probe-accessible area (Thommes et al. 2015 §5.2.2, §5.1.1).")
+
+    # §7.2 / §9 — BJH underestimates narrow mesopores.
+    rp_peak = s.get("rp_peak_BJH", np.nan)
+    if np.isfinite(rp_peak):
+        peak_diam = rp_peak * 2.0
+        if peak_diam < BJH_NARROW_MESOPORE_NM:
+            notes.append(f"BJH peak diameter {peak_diam:.1f} nm is below 10 nm — "
+                         "Kelvin-equation (BJH) procedures underestimate narrow "
+                         "mesopore size by ~20-30% (Thommes et al. 2015 §7.2, §9).")
+
+    # §7.1 — Gurvich total pore volume needs a near-horizontal high-p/p0 region.
+    if not iso_cls.get("has_plateau", False):
+        notes.append("The isotherm does not approach a plateau near p/p0 = 1 — "
+                     "the Gurvich-rule total pore volume is not valid for this "
+                     "(composite Type IV + Type II) isotherm (Thommes et al. 2015 §7.1).")
+
+    return notes
+
+
 def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
                  bet_res: dict, sample_name: str):
     s = data["summary"]
@@ -922,6 +983,12 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
         print("\n  ⚠  WARNING: BET C constant is NEGATIVE.")
         print("     The selected p/p₀ range is outside the valid BET region.")
         print("     Per IUPAC 2015, revise start_pt/end_pt (0.05 ≤ p/p₀ ≤ 0.35).")
+
+    notes = validity_warnings(s, iso_cls)
+    if notes:
+        print("\n  Validity notes (IUPAC 2015)")
+        for n in notes:
+            print(f"    ⚠  {n}")
 
     print(f"\n  BET Regression  (points {s['start_pt']}–{s['end_pt']})")
     print(f"    Slope     : {bet_res['slope']:.6f}")
