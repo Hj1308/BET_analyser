@@ -166,3 +166,20 @@ def test_sufficiency_gate_passes_with_enough_low_pressure_points():
     assert r["V_micro_cm3g"] is not None
     assert r["S_total_m2g"] is not None
     assert r["t_bend_A"] is not None
+
+
+def test_gate_requires_primary_filling_point():
+    # 3+ points below 0.08 but none below 0.015 (9.xls-like) -> refused: the
+    # wider-micropore points do not carry the steep primary-filling slope.
+    p = np.array([0.03, 0.05, 0.07, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+    v = np.linspace(5.0, 100.0, len(p))
+    tp = TPlotAnalyser(p, v, s_bet=100.0, total_pore_volume=0.3)
+
+    r = tp.full_tplot_report()
+
+    assert r["micropore_analysis_possible"] is False
+    assert r["n_points_below_pp008"] == 3
+    assert r["n_points_below_pp0015"] == 0
+    assert r["V_micro_cm3g"] is None
+    assert "p/p0 = 0.015" in r["micropore_analysis_reason"]
+    assert "p/p0 = 0.08" not in r["micropore_analysis_reason"]  # first layer passed
