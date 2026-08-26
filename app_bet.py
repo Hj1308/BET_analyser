@@ -730,22 +730,28 @@ with tab_langmuir:
             )
         else:
             try:
-                result = fit_langmuir_window(p_sel, n_sel)
+                result = fit_langmuir_window(
+                    p_sel, n_sel,
+                    has_hysteresis=iso_cls["has_hysteresis"],
+                    has_plateau=iso_cls["has_plateau"],
+                    S_BET=s["S_BET"],
+                )
             except ValueError as e:
                 st.error(f"Langmuir fit error: {e}")
                 result = None
 
             if result is not None:
-                status = "PASS" if result["physical_fit"] else "FAIL"
+                applicable = result.get("model_applicable", result.get("physical_fit", False))
+                status = "PASS" if applicable else "FAIL"
 
-                if result["physical_fit"]:
+                if applicable:
                     langmuir_result = result
                 else:
                     st.warning(
-                        "The Langmuir regression completed, but the fitted "
-                        "parameters are non-physical (slope, intercept, n_m, "
-                        "or K is not positive). The result will not be added "
-                        "to the downloadable CSV report."
+                        "The Langmuir regression completed, but the model is not "
+                        "applicable to this isotherm (hysteresis present, no plateau, "
+                        "S_Langmuir > S_BET, or low R²) or parameters are non-physical. "
+                        "The result will not be added to the downloadable CSV report."
                     )
 
                 col_l1, col_l2 = st.columns([1, 2])
@@ -754,7 +760,8 @@ with tab_langmuir:
                     st.table(pd.DataFrame({
                         "Parameter": [
                             "p/p₀ min", "p/p₀ max", "Points",
-                            "S_Langmuir", "n_m", "K", "R²", "Fit status",
+                            "S_Langmuir", "n_m", "K", "R²",
+                            "Model applicable", "Fit status",
                         ],
                         "Value": [
                             f"{result['p_min']:.4f}",
@@ -764,6 +771,7 @@ with tab_langmuir:
                             f"{result['n_m']:.2f} ± {result['sigma_n_m']:.2f} cm³(STP) g⁻¹",
                             f"{result['K']:.2f} ± {result['sigma_K']:.2f} (p/p0)⁻¹",
                             f"{result['R2']:.6f}",
+                            "✓" if applicable else "✗",
                             status,
                         ],
                     }))
@@ -796,7 +804,9 @@ with tab_langmuir:
                 st.caption(
                     "BET and Langmuir areas arise from different adsorption-model "
                     "assumptions; agreement or disagreement should be interpreted with "
-                    "the isotherm type, pore structure, and quality of fit."
+                    "the isotherm type, pore structure, and quality of fit. "
+                    "S_Langmuir > S_BET by >20 % or model_applicable=✗ suggests the "
+                    "Langmuir model does not describe this isotherm."
                 )
 
                 with st.expander("Langmuir model and equations"):
