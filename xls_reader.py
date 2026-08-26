@@ -1,9 +1,11 @@
 """
 xls_reader.py
 ~~~~~~~~~~~~~
-Reads legacy .xls files directly via the xlrd API (version 1.2.x),
-completely bypassing pandas ExcelFile / read_excel so that the
-pandas >= 2.0 xlrd-version guard is never triggered.
+Reads legacy .xls files directly via the xlrd API, completely bypassing
+pandas ExcelFile / read_excel so that the pandas >= 2.0 xlrd-version guard is
+never triggered. The xlrd API used here (open_workbook, sheet.nrows/ncols,
+sheet.cell, XL_CELL_* constants) is stable for .xls files across xlrd 1.2.x
+and 2.x; the runtime dependency therefore pins xlrd>=2.0.
 
 Returns sheet data as {sheet_name: pd.DataFrame} with header=None,
 matching the output of pd.read_excel(..., header=None).

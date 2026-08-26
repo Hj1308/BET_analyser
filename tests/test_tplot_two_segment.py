@@ -18,6 +18,7 @@ from tplot_analysis import (
     N2_STP_TO_LIQUID,
     TPlotAnalyser,
     fit_two_segment,
+    harkins_jura_t,
 )
 
 
@@ -157,7 +158,10 @@ def test_sufficiency_gate_refuses_micropore_when_undersampled():
 
 def test_sufficiency_gate_passes_with_enough_low_pressure_points():
     p = np.array([0.001, 0.01, 0.03, 0.06, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
-    v = np.linspace(2.0, 100.0, len(p))
+    # A physical two-segment t-plot (steep origin line below t_bend = 4.5 A,
+    # gentler free line above) so the fit is physical and emits no warnings.
+    t = harkins_jura_t(p)
+    v = _two_segment(t, slope1=8.0, slope2=3.0, t_bend=4.5)
     tp = TPlotAnalyser(p, v, s_bet=100.0, total_pore_volume=0.3)
 
     r = tp.full_tplot_report()

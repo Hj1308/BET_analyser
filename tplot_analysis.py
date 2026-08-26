@@ -88,6 +88,7 @@ License : MIT
 """
 
 import argparse
+import sys
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
@@ -632,12 +633,12 @@ class TPlotAnalyser:
             result["micropore_analysis_reason"] = (
                 "micropore volume and surface area cannot be determined from "
                 "this measurement (" + "; ".join(failed) + "). A t-plot "
-                "micropore analysis needs at least one point below "
-                "p/p0 ≈ 0.015 and ideally several down to 1e-3 or lower, to "
-                "sample the primary micropore-filling region (Thommes et al. "
-                "2015 §6.1; Cychosz & Thommes 2018 §3). §6.1 also recommends "
-                "argon at 87 K over nitrogen at 77 K where surface functional "
-                "groups interact with the N2 quadrupole."
+                "micropore analysis needs at least one adsorption point below "
+                "p/p0 ~ 0.015, ideally several lower still; check your "
+                "instrument's low-pressure specification and measurement-range "
+                "setting (Thommes et al. 2015 §6.1; Cychosz & Thommes 2018 §3). "
+                "§6.1 also recommends argon at 87 K over nitrogen at 77 K where "
+                "surface functional groups interact with the N2 quadrupole."
             )
         # Compatibility keys (Phase 1A naming) — S_ext is now the *external*
         # area from line 2, not the old single-line slope.
@@ -860,7 +861,16 @@ class TPlotAnalyser:
 # STANDALONE ENTRY POINT
 # ══════════════════════════════════════════════════════════════
 
+def _configure_console():
+    """Emit UTF-8 so the report never crashes a cp1252 console (see bet_analysis)."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def main():
+    _configure_console()
     parser = argparse.ArgumentParser(
         description="T-Plot Analysis (two-segment) from raw P/P0 + V data")
     parser.add_argument("--s-bet",  type=float, required=True,
