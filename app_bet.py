@@ -1017,7 +1017,7 @@ with tab_tplot:
     else:
         st.subheader("T-Plot Micropore Analysis")
         try:
-            from tplot_analysis import TPlotAnalyser
+            from tplot_analysis import TPlotAnalyser, LINE1_T_MIN, HJ_VALID_T_MAX
 
             # ── S_BET source for the decomposition ────────────────────────────
             s_bet_tplot = s["S_BET"]
@@ -1038,27 +1038,28 @@ with tab_tplot:
             # ── Adjustable fit window ─────────────────────────────────────────
             t_lo, t_hi = st.slider(
                 "T-Plot fit window (Å)",
-                min_value=2.5, max_value=8.0,
-                value=(3.5, 5.0), step=0.1,
-                help=("Standard de Boer window: 3.5–5.0 Å "
-                      "(p/p₀ ≈ 0.08–0.30 for Harkins–Jura). "
-                      "Widen only if too few measured points fall inside; "
-                      "above ~5.5 Å you risk entering capillary condensation."),
+                min_value=LINE1_T_MIN, max_value=8.0,
+                value=(LINE1_T_MIN, HJ_VALID_T_MAX), step=0.1,
+                help=("Two-segment t-plot window. The default spans line 1's "
+                      "floor (LINE1_T_MIN, micropore filling, p/p₀ ≈ 0.005) to "
+                      "line 2's ceiling (HJ_VALID_T_MAX); line 2 is kept inside "
+                      "the Harkins-Jura validity range 3.5–6.5 Å."),
             )
-            if t_hi > 5.5:
-                st.warning(
-                    "⚠ Window extends above 5.5 Å (p/p₀ ≳ 0.37) — risk of "
-                    "including capillary condensation (upward curvature at high t). "
-                    "Verify the fitted points stay linear."
-                )
 
             tp = TPlotAnalyser(
                 pressure          = data["ads"][:, 0],
                 volume_adsorbed   = data["ads"][:, 1],
                 s_bet             = s_bet_tplot,
                 total_pore_volume = s["Vp_total"],
+                c_constant        = s["C"],
             )
             res = tp.full_tplot_report(t_min=t_lo, t_max=t_hi)
+
+            # ── Sufficiency gate ─────────────────────────────────────────────
+            if not res["micropore_analysis_possible"]:
+                st.warning(
+                    f"⚠ Micropore analysis not possible: {res['micropore_analysis_reason']}"
+                )
 
             # ── Consistency warnings ──────────────────────────────────────────
             if res["n_points"] < 5:
@@ -1083,22 +1084,34 @@ with tab_tplot:
             col_t1, col_t2 = st.columns([1, 2])
             with col_t1:
                 st.markdown("**T-Plot Results**")
+
+                def _fmt(v, spec):
+                    return "—" if v is None else f"{v:{spec}}"
+
                 st.table(pd.DataFrame({
-                    "Parameter": ["S_BET", "S_ext", "S_micro", "V_micro", "V_meso"],
+                    "Parameter": ["S_BET", "S_total", "S_ext", "S_micro",
+                                  "V_micro", "V_meso", "2t (mean pore Ø)"],
                     "Value": [
-                        f"{res['S_BET_m2g']:.2f}",
-                        f"{res['S_ext_m2g']:.2f}",
-                        f"{res['S_micro_m2g']:.2f}",
-                        f"{res['V_micro_cm3g']:.4f}",
-                        f"{res['V_meso_cm3g']:.4f}",
+                        _fmt(res["S_BET_m2g"], ".2f"),
+                        _fmt(res["S_total_m2g"], ".2f"),
+                        _fmt(res["S_ext_m2g"], ".2f"),
+                        _fmt(res["S_micro_m2g"], ".2f"),
+                        _fmt(res["V_micro_cm3g"], ".4f"),
+                        _fmt(res["V_meso_cm3g"], ".4f"),
+                        _fmt(res["2t_nm"], ".3f"),
                     ],
-                    "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "cm³ g⁻¹", "cm³ g⁻¹"],
+                    "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "m² g⁻¹",
+                             "cm³ g⁻¹", "cm³ g⁻¹", "nm"],
                 }))
                 st.caption(
                     f"S_BET source: **{sbet_source}** · "
                     f"Fit range: {res['t_range'][0]}–{res['t_range'][1]} Å "
-                    f"({res['n_points']} pts) · R² = {res['R2_tplot']:.5f}"
+                    f"({res['n_points']} pts) · reference: {res['reference_curve']}"
                 )
+                if res.get("warnings"):
+                    st.warning("⚠ " + "; ".join(res["warnings"]))
+                if res.get("low_confidence"):
+                    st.info(f"Low confidence: {res['low_confidence_reason']}")
             with col_t2:
                 buf = io.BytesIO()
                 tp.plot_tplot(save_path=buf, sample_name=sample_name,
