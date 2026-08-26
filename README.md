@@ -28,7 +28,7 @@ Developed and validated for **graphene-like carbon nitride (C₃N₄)**, MOFs, z
 ```bash
 git clone https://github.com/Hj1308/BET_analyser.git
 cd BET_analyser
-pip install -r BET_requirements.txt
+pip install -r requirements.txt
 
 # Run BET + BJH analysis (with Rouquerol auto range)
 python bet_analysis.py --file C3N4.xls --sample "C3N4" --rouquerol
@@ -48,7 +48,7 @@ streamlit run app_bet.py
 writing Python:
 
 ```bash
-pip install -r BET_requirements.txt
+pip install -r requirements.txt
 streamlit run app_bet.py
 ```
 
@@ -260,8 +260,7 @@ BET_analyser/
 ├── CITATION.cff           # citation metadata
 ├── CHANGELOG.md           # release history
 ├── LICENSE                # MIT
-├── BET_requirements.txt   # runtime deps
-├── requirements.txt       # runtime deps (packaging source)
+├── requirements.txt       # runtime deps (single source)
 └── README.md
 ```
 
