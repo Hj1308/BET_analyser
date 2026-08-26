@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bet-analyser"
-version = "2.3.0"
+version = "3.0.0"
 description = "Publication-quality BET/BJH, t-plot, Rouquerol, and Langmuir adsorption analysis"
 readme = "README.md"
 requires-python = ">=3.10"
