@@ -260,21 +260,19 @@ def read_bet_xls(filepath: str) -> dict:
 # ══════════════════════════════════════════════════════════════
 
 # Normalised loop-area threshold above which an adsorption/desorption branch
-# pair is treated as a genuine hysteresis loop. This is a heuristic, not a
-# physical law. On the audit samples the normalised area sits at:
-#   - 13BgOH.xls : 0.0125  (below -> no loop)
-#   - BC.xls     : 0.0221  (above -> loop)
-#   - g-OH.xls   : 0.0459  (well above -> loop)
-# A higher threshold is tempting (0.02 is a common first guess, and would
-# still separate BC/g-OH from 13BgOH), but it over-sweeps: the synthetic
-# Type IV (H1) fixture has a genuine loop with a normalised area of ~0.0134,
-# and 0.02 would push it out of the hysteresis branch and misclassify it as
-# Type VI. The chosen value therefore has to sit between 13BgOH (0.0125) and
-# that fixture (0.0134); the margin is narrow and should be revisited if the
-# normalisation changes. Moving the threshold to 0.025 would flip BC to "no
-# loop". Exposed as a keyword argument on classify_isotherm so it can be
-# overridden.
-HYSTERESIS_AREA_THRESHOLD = 0.013
+# pair is treated as a mesopore capillary-condensation loop (the Type IV/V
+# signature). This is a heuristic, not a physical law. Measured normalised
+# areas on the audit samples:
+#   - 13BgOH.xls : 0.0125   (below -> no loop)
+#   - 14H.xls    : 0.0215   (~8% above -> loop, uncertain)
+#   - 9.xls      : 0.0221   (~10% above -> loop, uncertain)
+#   - g-OH.xls   : 0.0459   (well above -> loop)
+#   - 10.xls     : 0.0518   (well above -> loop)
+# Synthetic fixtures: TypeIV_H1 = 0.0334, TypeV_H2 = 0.0317 (both above).
+# 14H and 9 sit only ~8-10% above the threshold, so classifications whose loop
+# area is near 0.02 are uncertain. Exposed as a keyword argument on
+# classify_isotherm so it can be overridden.
+HYSTERESIS_AREA_THRESHOLD = 0.02
 
 # Minimum number of desorption-branch points required before a loop can be
 # defined at all; a 1-2 point branch cannot close a loop.

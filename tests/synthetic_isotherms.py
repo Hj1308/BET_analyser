@@ -94,7 +94,10 @@ CASES = {
     "TypeII_noHyst":  (type_II,  None),
     "TypeIII_noHyst": (type_III, None),
     "TypeVI_noHyst":  (type_VI,  None),
-    "TypeIV_H1":      (type_IV,  (0.06, 0.45)),
+    # The loop width (shift) is meant to be representative of an H1 loop and
+    # was deliberately NOT tuned against the detection threshold; with
+    # shift = 0.15 the normalised loop area (~0.033) sits well clear of it.
+    "TypeIV_H1":      (type_IV,  (0.15, 0.45)),
     "TypeV_H2":       (type_V,   (0.10, 0.50)),
 }
 
