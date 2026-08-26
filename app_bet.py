@@ -23,6 +23,8 @@ from bet_analysis import (
     verify_bet,
     plot_all,
     setup_plot_style,
+    validity_warnings,
+    BJH_NARROW_MESOPORE_NM,
     C_ADS, C_DES, C_BET, C_BJH, C_CUM, N2_CAVITATION_NM,
 )
 from rouquerol import (
@@ -559,15 +561,25 @@ with tab_overview:
 
         st.markdown("**Hysteresis Classification**")
         if hyst_cls["type"] != "None":
-            conf = hyst_cls["confidence"]
-            fn = st.success if conf == "high" else st.warning if conf == "moderate" else st.error
+            share = hyst_cls["score_share"]
+            fn = st.success if share == "high" else st.warning if share == "moderate" else st.error
             fn(
                 f"**{hyst_cls['type']}**  \n"
                 f"{hyst_cls['explanation']}  \n"
-                f"Confidence: {conf} ({hyst_cls['confidence_pct']:.0f}%)"
+                f"Score share: {share} ({hyst_cls['score_share_pct']:.0f}% of total score)"
             )
         else:
             st.info("No hysteresis detected.")
+
+        no_condensation_types = ("Type I(a)", "Type I(b)", "Type II", "Type III",
+                                 "Type VI")
+        if iso_cls["type"] in no_condensation_types and hyst_cls["type"] != "None":
+            st.info(
+                f"A {hyst_cls['type']} hysteresis loop together with a "
+                f"{iso_cls['type']} isotherm is an expected combination — an H3 "
+                "loop sits on a Type II adsorption branch by definition "
+                "(Thommes et al. 2015 §4.3.2)."
+            )
 
     st.divider()
 
@@ -590,6 +602,9 @@ with tab_overview:
         '<span class="tag-warning">⚠ C constant negative — check p/p₀ range</span>'
     )
     st.markdown(tag, unsafe_allow_html=True)
+
+    for note in validity_warnings(s, iso_cls):
+        st.warning(note)
 
     # ── Rouquerol summary on overview ─────────────────────────────────────────────
     if use_rouquerol and rouquerol_result is not None:
@@ -730,22 +745,28 @@ with tab_langmuir:
             )
         else:
             try:
-                result = fit_langmuir_window(p_sel, n_sel)
+                result = fit_langmuir_window(
+                    p_sel, n_sel,
+                    has_hysteresis=iso_cls["has_hysteresis"],
+                    has_plateau=iso_cls["has_plateau"],
+                    S_BET=s["S_BET"],
+                )
             except ValueError as e:
                 st.error(f"Langmuir fit error: {e}")
                 result = None
 
             if result is not None:
-                status = "PASS" if result["physical_fit"] else "FAIL"
+                applicable = result.get("model_applicable", result.get("physical_fit", False))
+                status = "PASS" if applicable else "FAIL"
 
-                if result["physical_fit"]:
+                if applicable:
                     langmuir_result = result
                 else:
                     st.warning(
-                        "The Langmuir regression completed, but the fitted "
-                        "parameters are non-physical (slope, intercept, n_m, "
-                        "or K is not positive). The result will not be added "
-                        "to the downloadable CSV report."
+                        "The Langmuir regression completed, but the model is not "
+                        "applicable to this isotherm (hysteresis present, no plateau, "
+                        "S_Langmuir > S_BET, or low R²) or parameters are non-physical. "
+                        "The result will not be added to the downloadable CSV report."
                     )
 
                 col_l1, col_l2 = st.columns([1, 2])
@@ -754,7 +775,8 @@ with tab_langmuir:
                     st.table(pd.DataFrame({
                         "Parameter": [
                             "p/p₀ min", "p/p₀ max", "Points",
-                            "S_Langmuir", "n_m", "K", "R²", "Fit status",
+                            "S_Langmuir", "n_m", "K", "R²",
+                            "Model applicable", "Fit status",
                         ],
                         "Value": [
                             f"{result['p_min']:.4f}",
@@ -764,6 +786,7 @@ with tab_langmuir:
                             f"{result['n_m']:.2f} ± {result['sigma_n_m']:.2f} cm³(STP) g⁻¹",
                             f"{result['K']:.2f} ± {result['sigma_K']:.2f} (p/p0)⁻¹",
                             f"{result['R2']:.6f}",
+                            "✓" if applicable else "✗",
                             status,
                         ],
                     }))
@@ -796,7 +819,9 @@ with tab_langmuir:
                 st.caption(
                     "BET and Langmuir areas arise from different adsorption-model "
                     "assumptions; agreement or disagreement should be interpreted with "
-                    "the isotherm type, pore structure, and quality of fit."
+                    "the isotherm type, pore structure, and quality of fit. "
+                    "S_Langmuir > S_BET by >20 % or model_applicable=✗ suggests the "
+                    "Langmuir model does not describe this isotherm."
                 )
 
                 with st.expander("Langmuir model and equations"):
@@ -921,21 +946,32 @@ with tab_rouquerol:
 with tab_bjh:
     st.subheader("BJH Pore Size Distribution")
 
+    peak_diam = s["rp_peak_BJH"] * 2.0
+    if peak_diam < BJH_NARROW_MESOPORE_NM:
+        st.warning(
+            f"⚠ BJH peak diameter {peak_diam:.1f} nm is below 10 nm — "
+            "Kelvin-equation (BJH) procedures underestimate narrow mesopore "
+            "size by ~20-30% (Thommes et al. 2015 §7.2, §9)."
+        )
+
     bjh = data["bjh"]
-    rp  = bjh[:, 0] * 2
-    dVdr = bjh[:, 1]; cum_Vp = bjh[:, 2]; cum_Sap = bjh[:, 3]
+    # Instrument headers verified as radius ("rp/nm") and per-radius
+    # differential ("dVp/drp"), so rp*2 = diameter and dV/dd = dV/dr / 2.
+    rp   = bjh[:, 0] * 2           # radius (nm) -> diameter (nm)
+    dVdd = bjh[:, 1] / 2.0         # dVp/drp -> dVp/ddp
+    cum_Vp = bjh[:, 2]; cum_Sap = bjh[:, 3]
 
     setup_plot_style()
     fig_bjh, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
 
-    ax1.plot(rp, dVdr, "-", color=C_BJH, lw=1.5)
-    ax1.fill_between(rp, dVdr, alpha=0.15, color=C_BJH)
-    pk = np.argmax(dVdr)
+    ax1.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
+    ax1.fill_between(rp, dVdd, alpha=0.15, color=C_BJH)
+    pk = np.argmax(dVdd)
     ax1.axvline(rp[pk], ls="--", lw=0.9, color=C_BJH, alpha=0.7)
-    ax1.text(rp[pk]+0.3, dVdr[pk]*0.9, f"{rp[pk]:.1f} nm", fontsize=8, color=C_BJH)
+    ax1.text(rp[pk]+0.3, dVdd[pk]*0.9, f"{rp[pk]:.1f} nm", fontsize=8, color=C_BJH)
     ax1.axvline(N2_CAVITATION_NM, ls=":", lw=0.8, color="0.6")
     ax1.set_xlabel("Pore Diameter (nm)")
-    ax1.set_ylabel(r"d$V_p$/d$r_p$ (cm³ g⁻¹ nm⁻¹)")
+    ax1.set_ylabel(r"d$V_p$/d$d_p$ (cm³ g⁻¹ nm⁻¹)")
     ax1.set_xlim(left=0); ax1.set_ylim(bottom=0)
     ax1.set_title("Differential PSD")
 
@@ -981,7 +1017,7 @@ with tab_tplot:
     else:
         st.subheader("T-Plot Micropore Analysis")
         try:
-            from tplot_analysis import TPlotAnalyser
+            from tplot_analysis import TPlotAnalyser, LINE1_T_MIN, HJ_VALID_T_MAX
 
             # ── S_BET source for the decomposition ────────────────────────────
             s_bet_tplot = s["S_BET"]
@@ -1002,27 +1038,28 @@ with tab_tplot:
             # ── Adjustable fit window ─────────────────────────────────────────
             t_lo, t_hi = st.slider(
                 "T-Plot fit window (Å)",
-                min_value=2.5, max_value=8.0,
-                value=(3.5, 5.0), step=0.1,
-                help=("Standard de Boer window: 3.5–5.0 Å "
-                      "(p/p₀ ≈ 0.08–0.30 for Harkins–Jura). "
-                      "Widen only if too few measured points fall inside; "
-                      "above ~5.5 Å you risk entering capillary condensation."),
+                min_value=LINE1_T_MIN, max_value=8.0,
+                value=(LINE1_T_MIN, HJ_VALID_T_MAX), step=0.1,
+                help=("Two-segment t-plot window. The default spans line 1's "
+                      "floor (LINE1_T_MIN, micropore filling, p/p₀ ≈ 0.005) to "
+                      "line 2's ceiling (HJ_VALID_T_MAX); line 2 is kept inside "
+                      "the Harkins-Jura validity range 3.5–6.5 Å."),
             )
-            if t_hi > 5.5:
-                st.warning(
-                    "⚠ Window extends above 5.5 Å (p/p₀ ≳ 0.37) — risk of "
-                    "including capillary condensation (upward curvature at high t). "
-                    "Verify the fitted points stay linear."
-                )
 
             tp = TPlotAnalyser(
                 pressure          = data["ads"][:, 0],
                 volume_adsorbed   = data["ads"][:, 1],
                 s_bet             = s_bet_tplot,
                 total_pore_volume = s["Vp_total"],
+                c_constant        = s["C"],
             )
             res = tp.full_tplot_report(t_min=t_lo, t_max=t_hi)
+
+            # ── Sufficiency gate ─────────────────────────────────────────────
+            if not res["micropore_analysis_possible"]:
+                st.warning(
+                    f"⚠ Micropore analysis not possible: {res['micropore_analysis_reason']}"
+                )
 
             # ── Consistency warnings ──────────────────────────────────────────
             if res["n_points"] < 5:
@@ -1047,22 +1084,34 @@ with tab_tplot:
             col_t1, col_t2 = st.columns([1, 2])
             with col_t1:
                 st.markdown("**T-Plot Results**")
+
+                def _fmt(v, spec):
+                    return "—" if v is None else f"{v:{spec}}"
+
                 st.table(pd.DataFrame({
-                    "Parameter": ["S_BET", "S_ext", "S_micro", "V_micro", "V_meso"],
+                    "Parameter": ["S_BET", "S_total", "S_ext", "S_micro",
+                                  "V_micro", "V_meso", "2t (mean pore Ø)"],
                     "Value": [
-                        f"{res['S_BET_m2g']:.2f}",
-                        f"{res['S_ext_m2g']:.2f}",
-                        f"{res['S_micro_m2g']:.2f}",
-                        f"{res['V_micro_cm3g']:.4f}",
-                        f"{res['V_meso_cm3g']:.4f}",
+                        _fmt(res["S_BET_m2g"], ".2f"),
+                        _fmt(res["S_total_m2g"], ".2f"),
+                        _fmt(res["S_ext_m2g"], ".2f"),
+                        _fmt(res["S_micro_m2g"], ".2f"),
+                        _fmt(res["V_micro_cm3g"], ".4f"),
+                        _fmt(res["V_meso_cm3g"], ".4f"),
+                        _fmt(res["2t_nm"], ".3f"),
                     ],
-                    "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "cm³ g⁻¹", "cm³ g⁻¹"],
+                    "Unit": ["m² g⁻¹", "m² g⁻¹", "m² g⁻¹", "m² g⁻¹",
+                             "cm³ g⁻¹", "cm³ g⁻¹", "nm"],
                 }))
                 st.caption(
                     f"S_BET source: **{sbet_source}** · "
                     f"Fit range: {res['t_range'][0]}–{res['t_range'][1]} Å "
-                    f"({res['n_points']} pts) · R² = {res['R2_tplot']:.5f}"
+                    f"({res['n_points']} pts) · reference: {res['reference_curve']}"
                 )
+                if res.get("warnings"):
+                    st.warning("⚠ " + "; ".join(res["warnings"]))
+                if res.get("low_confidence"):
+                    st.info(f"Low confidence: {res['low_confidence_reason']}")
             with col_t2:
                 buf = io.BytesIO()
                 tp.plot_tplot(save_path=buf, sample_name=sample_name,
@@ -1109,7 +1158,7 @@ with tab_download:
         ["BJH_peak_diam (nm)",  f"{s['rp_peak_BJH']*2:.2f}"],
         ["Isotherm type",       iso_cls["type"]],
         ["Hysteresis type",     hyst_cls["type"]],
-        ["Hysteresis conf.",    hyst_cls.get("confidence", "—")],
+        ["Hysteresis score share", hyst_cls.get("score_share", "—")],
     ]
     if use_rouquerol and rouquerol_result is not None and rouquerol_result["best"] is not None:
         best = rouquerol_result["best"]

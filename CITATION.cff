@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use BET_analyser, please cite it as below."
 type: software
 title: "BET_analyser: Publication-Quality BET/BJH + T-Plot Analysis Tool"
-version: "2.3.0"
+version: "3.0.0"
 date-released: "2026-08-25"
 authors:
   - family-names: "Jafari"

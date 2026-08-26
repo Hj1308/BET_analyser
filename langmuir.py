@@ -35,6 +35,23 @@ BET-specific) and does not claim that Langmuir replaces BET. S_Langmuir is a
 complementary descriptor: interpret it cautiously for heterogeneous,
 mesoporous, multilayer-adsorption or microporous / Type-I systems.
 
+Model applicability (domain checks added to `fit_langmuir_window`):
+- The Langmuir model describes monolayer saturation; it is not applicable
+  when a hysteresis loop is present (capillary condensation implies
+  multilayer adsorption).
+- The isotherm should approach a plateau at high p/p0 (saturation); a
+  continuously rising isotherm violates the monolayer assumption.
+- S_Langmuir should not exceed S_BET by more than LANGMUIR_S_BET_MARGIN
+  (default 20 %); for N₂ physisorption at 77 K, the BET area already
+  includes multilayer contributions, so a larger Langmuir area is
+  physically implausible.
+- R² below LANGMUIR_R2_THRESHOLD (default 0.99) indicates the linear
+  Langmuir model does not adequately describe the data.
+
+These checks are reported as `model_applicable`; `physical_fit` continues
+to mean only that the fitted parameters (slope, intercept, n_m, K, S) are
+positive and finite.
+
 Author  : Hoda Jafari | github.com/Hj1308
 License : MIT
 """
@@ -49,6 +66,14 @@ from scipy.stats import linregress
 N2_LANGMUIR_FACTOR = 4.353
 MIN_LANGMUIR_POINTS = 3
 
+# Applicability thresholds for Langmuir model (heuristics, documented).
+# R² below this suggests the linear Langmuir model does not describe the data.
+LANGMUIR_R2_THRESHOLD = 0.99
+# S_Langmuir may not exceed S_BET by more than this margin (20 %) for N₂
+# physisorption at 77 K — the BET area already includes multilayer
+# contributions, so a larger Langmuir area is physically implausible.
+LANGMUIR_S_BET_MARGIN = 0.20
+
 
 def langmuir_linear_y(p_rel: np.ndarray, n: np.ndarray) -> np.ndarray:
     """Standard linear Langmuir ordinate: y = (p/p0) / n."""
@@ -59,7 +84,14 @@ def langmuir_linear_y(p_rel: np.ndarray, n: np.ndarray) -> np.ndarray:
     return y
 
 
-def fit_langmuir_window(p_rel: np.ndarray, n: np.ndarray) -> dict:
+def fit_langmuir_window(
+    p_rel: np.ndarray,
+    n: np.ndarray,
+    *,
+    has_hysteresis: bool = False,
+    has_plateau: bool = True,
+    S_BET: float | None = None,
+) -> dict:
     """Linear Langmuir fit on a selected window, with propagated uncertainty.
 
     scipy.stats.linregress returns the standard errors of the slope
@@ -77,6 +109,26 @@ def fit_langmuir_window(p_rel: np.ndarray, n: np.ndarray) -> dict:
     p_rel, n :
         Relative pressure and adsorbed amount (cm³(STP) g⁻¹) for the
         adsorption-branch points inside the selected window.
+    has_hysteresis :
+        True if the source isotherm exhibits a hysteresis loop (capillary
+        condensation); Langmuir assumes monolayer saturation and is not
+        applicable in that case.
+    has_plateau :
+        True if the isotherm approaches a plateau at high p/p0; a continuously
+        rising isotherm violates the monolayer saturation assumption.
+    S_BET :
+        BET surface area (m²/g) for comparison; if provided, S_Langmuir is
+        checked against S_BET with LANGMUIR_S_BET_MARGIN.
+
+    Returns
+    -------
+    dict with fit results, plus:
+      - ``physical_fit``: all fitted parameters (slope, intercept, n_m, K,
+        S_Langmuir) are positive and finite.
+      - ``model_applicable``: True only if physical_fit is True AND all
+        domain-applicability checks pass (no hysteresis, plateau present,
+        S_Langmuir ≤ S_BET*(1+margin) if S_BET given, R² ≥ threshold).
+      - ``applicability``: dict with individual check results and thresholds.
     """
     p_rel = np.asarray(p_rel, dtype=float)
     n = np.asarray(n, dtype=float)
@@ -150,6 +202,24 @@ def fit_langmuir_window(p_rel: np.ndarray, n: np.ndarray) -> dict:
         and S_Langmuir > 0
     )
 
+    # ── Model applicability checks ───────────────────────────────
+    r2_ok = bool(R2 >= LANGMUIR_R2_THRESHOLD)
+    plateau_ok = bool(has_plateau)
+    no_hyst_ok = not has_hysteresis
+
+    area_ok = True
+    if (
+        S_BET is not None
+        and np.isfinite(S_BET)
+        and S_BET > 0
+        and np.isfinite(S_Langmuir)
+    ):
+        area_ok = bool(S_Langmuir <= S_BET * (1.0 + LANGMUIR_S_BET_MARGIN))
+
+    model_applicable = bool(
+        physical_fit and r2_ok and plateau_ok and no_hyst_ok and area_ok
+    )
+
     return {
         "slope": slope,
         "intercept": intercept,
@@ -168,6 +238,15 @@ def fit_langmuir_window(p_rel: np.ndarray, n: np.ndarray) -> dict:
         "p_max": float(np.max(p_rel)),
         "n_points": int(len(p_rel)),
         "physical_fit": physical_fit,
+        "model_applicable": model_applicable,
+        "applicability": {
+            "r2_ok": r2_ok,
+            "r2_threshold": LANGMUIR_R2_THRESHOLD,
+            "plateau_ok": plateau_ok,
+            "no_hysteresis_ok": no_hyst_ok,
+            "area_ok": area_ok,
+            "s_bet_margin": LANGMUIR_S_BET_MARGIN,
+        },
         "positive_slope": positive_slope,
         "positive_intercept": positive_intercept,
         "positive_n_m": positive_n_m,
@@ -177,7 +256,8 @@ def fit_langmuir_window(p_rel: np.ndarray, n: np.ndarray) -> dict:
 
 def format_langmuir_report(result: dict, sample_name: str = "Sample") -> str:
     """Human-readable Langmuir report string."""
-    status = "PASS" if result.get("physical_fit") else "FAIL"
+    applicable = result.get("model_applicable", result.get("physical_fit", False))
+    status = "PASS" if applicable else "FAIL"
     lines = [
         f"Langmuir Surface Area — {sample_name}",
         f"  p/p0 window        : {result['p_min']:.4f} – {result['p_max']:.4f}"
@@ -191,4 +271,13 @@ def format_langmuir_report(result: dict, sample_name: str = "Sample") -> str:
         f" ± {result['sigma_K']:.1f} (p/p0)⁻¹",
         f"  R²                 : {result['R2']:.6f}",
     ]
+    if "applicability" in result:
+        ap = result["applicability"]
+        lines.append(
+            f"  applicability        : "
+            f"no_hysteresis={ap['no_hysteresis_ok']}, "
+            f"plateau={ap['plateau_ok']}, "
+            f"R2≥{ap['r2_threshold']:.2f}={ap['r2_ok']}, "
+            f"S_L≤S_BET*(1+{ap['s_bet_margin']:.0%})={ap['area_ok']}"
+        )
     return "\n".join(lines)
