@@ -139,6 +139,7 @@ class TPlotAnalyser:
         dict with:
             S_ext_m2g     — external (mesopore) surface area  (m²/g)
             V_micro_cm3g  — micropore volume  (cm³/g)
+            V_micro_raw_cm3g — micropore volume before clamping (cm³/g)
             R2_tplot      — R² of linear fit
             slope         — raw regression slope
             intercept     — raw regression intercept
@@ -200,10 +201,10 @@ class TPlotAnalyser:
         return {
             "S_ext_m2g"     : round(s_ext,   2),
             "V_micro_cm3g"  : round(v_micro, 5),
+            "V_micro_raw_cm3g": round(v_micro_raw, 6),
             "R2_tplot"      : round(r ** 2,  5),
             "slope"         : round(slope,   5),
             "intercept"     : round(intercept, 5),
-            "intercept_raw" : round(intercept, 5),
             "t_range"       : (round(t_min, 2), round(t_max, 2)),
             "n_points"      : n_points,
             "low_confidence": low_confidence,
