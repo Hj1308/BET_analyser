@@ -395,13 +395,20 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
         is_type_Ia = False
 
     # -- Classification ------------------------------------------
+    # TODO: Type IV(b) is currently unreachable. Per Thommes et al. (2015) §4.2,
+    # a mesoporous adsorbent with pores below a critical width (~4 nm for N2 in
+    # cylindrical pores at 77 K) gives a completely *reversible* Type IVb
+    # isotherm with no hysteresis loop. Our classifier can only send such a
+    # sample to I/II/III/VI. Discriminating IV(a)/IV(b) needs pore-size input
+    # and is deferred to a later phase; every Type IV produced here is
+    # hysteresis-bearing, hence the "Type IV(a)" label below.
     if is_stepped and not has_hyst:
         iso_type = "Type VI"
         explanation = ("Stepped isotherm. Multilayer adsorption on a "
                        "uniform non-porous surface.")
     elif has_hyst:
         if concave_low:
-            iso_type = "Type IV"
+            iso_type = "Type IV(a)"
             explanation = ("Hysteresis loop present + concave at low p/p₀. "
                            "Characteristic of mesoporous materials. "
                            "Monolayer–multilayer adsorption followed by "

@@ -115,7 +115,7 @@ EXPECTED = {
     "TypeII_noHyst":  "Type II",
     "TypeIII_noHyst": "Type III",
     "TypeVI_noHyst":  "Type VI",
-    "TypeIV_H1":      "Type IV",
+    "TypeIV_H1":      "Type IV(a)",
     "TypeV_H2":       "Type V",
 }
 
