@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22101160.svg)](https://doi.org/10.5281/zenodo.22101160)
 ![Version](https://img.shields.io/badge/version-v2.3.0-blue?style=flat-square)
-![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=flat-square&logo=python)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square&logo=python)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![IUPAC](https://img.shields.io/badge/IUPAC-2015%20compliant-orange?style=flat-square)
 
@@ -17,7 +17,7 @@ Author: [Hoda Jafari](https://github.com/Hj1308) | MIT License
 ## What is BET_analyser?
 
 A Python tool for **publication-quality physisorption analysis** from BET instrument XLS/XLSX output, with a Streamlit web app.  
-Designed for PhD-level materials characterisation — covers full IUPAC 2015 isotherm and hysteresis classification, BET regression with validity checks, **Rouquerol auto BET range selection**, BJH pore size distribution, and T-Plot micropore analysis.
+Designed for PhD-level materials characterisation — covers full IUPAC 2015 isotherm and hysteresis classification, BET regression with validity checks, **Rouquerol auto BET range selection**, BJH pore size distribution, T-Plot micropore analysis, and a **Langmuir surface-area** model.
 
 Developed and validated for **graphene-like carbon nitride (C₃N₄)**, MOFs, zeolites, and hierarchical porous materials.
 
@@ -39,6 +39,23 @@ python tplot_analysis.py --s-bet 95.3 --vtot 0.38 --sample "C3N4"
 # Or launch the web app
 streamlit run app_bet.py
 ```
+
+---
+
+## 🖥️ Streamlit Web App
+
+`app_bet.py` provides a browser UI for the same analyses as the CLI, without
+writing Python:
+
+```bash
+pip install -r BET_requirements.txt
+streamlit run app_bet.py
+```
+
+The app exposes tabs for the **Overview**, **BET**, **Langmuir**, **Rouquerol**,
+**BJH / PSD**, **T-Plot**, and a **Download** tab that renders the publication
+figure and a CSV report. It accepts XLS, XLSX and CSV uploads, and surfaces the
+same IUPAC validity warnings and the t-plot sufficiency gate as the CLI.
 
 ---
 
@@ -156,6 +173,20 @@ Automatically scored using 6 physical features (area, slope ratio, closure point
 | **BJH branch** | Adsorption branch used to avoid the ~3.4 nm N₂ cavitation artefact in desorption BJH at 77 K |
 | **Missing data** | `ValueError` with descriptive message if required XLS sheets or row labels are absent |
 
+### Reported validity caveats
+
+Beyond raising on hard errors, the report (and the app) now surfaces IUPAC
+validity caveats that were previously silent — a low BET C constant (interpretation
+of `n_m` questionable when C < 50), the BET area on a Type I isotherm being an
+*apparent* area, BJH underestimating narrow mesopores by 20–30 % below ~10 nm,
+and the Gurvich-rule total pore volume being invalid without a high-p/p₀ plateau
+(Thommes et al. 2015 §5.1.1, §5.2.2, §7.1, §7.2, §9).
+
+A t-plot **micropore** analysis additionally requires adsorption points below
+**p/p₀ ≈ 0.015** (ideally several down to 1e-3) to sample the primary micropore-
+filling region; if the measurement lacks them, the tool refuses to report a
+micropore volume rather than printing `0.0` (Thommes et al. 2015 §6.1).
+
 ---
 
 ## 📌 Physical Constants (N₂ at 77 K)
@@ -208,14 +239,27 @@ tp.plot_tplot(save_path="C3N4_tplot.png", sample_name="C3N4")
 BET_analyser/
 ├── app_bet.py             # Streamlit web application
 ├── bet_analysis.py        # BET + BJH main script
+├── langmuir.py            # Langmuir monolayer-adsorption analysis
 ├── rouquerol.py           # Rouquerol auto BET range selection
 ├── tplot_analysis.py      # T-Plot analysis module
 ├── xls_reader.py          # Legacy .xls reader (xlrd API)
+├── conftest.py            # pytest path configuration
 ├── tests/
-│   └── test_rouquerol.py  # Unit tests (pytest)
-├── .github/workflows/     # CI — pytest on every push
-├── BET_requirements.txt   # runtime deps (incl. streamlit)
-├── requirements.txt       # pinned deps + pytest
+│   ├── synthetic_isotherms.py          # closed-form isotherm fixtures
+│   ├── test_isotherm_classification.py
+│   ├── test_langmuir.py
+│   ├── test_rouquerol.py
+│   └── test_tplot_two_segment.py
+├── .streamlit/            # Streamlit config
+├── .github/workflows/     # CI
+├── .python-version        # pinned dev Python (3.11)
+├── packages.txt           # Streamlit Cloud system deps
+├── pyproject.toml         # packaging metadata + dev extra
+├── CITATION.cff           # citation metadata
+├── CHANGELOG.md           # release history
+├── LICENSE                # MIT
+├── BET_requirements.txt   # runtime deps
+├── requirements.txt       # runtime deps (packaging source)
 └── README.md
 ```
 
@@ -236,13 +280,7 @@ BET_analyser/
 
 ## 🔀 Changelog
 
-| Version | Key Changes |
-|---------|-------------|
-| **v2.3.0** | Langmuir surface-area tab with monolayer capacity (`n_m`), affinity constant (`K`), S_Langmuir, R², and propagated uncertainty; physical-fit validation and CSV safety gate; BET sensitivity heatmap with selected-window marker and unique-window diagnostic |
-| **v2.2.0** | Rouquerol auto BET range selection (`rouquerol.py`) with 4 consistency criteria + multi-window scan; R²≥0.999 linearity filter; **BET uncertainty propagation** (σ(S_BET), σ(C) from linregress stderr); Rouquerol tab in Streamlit app; instrument range matched by p/p₀; adjustable T-Plot fit window; unit tests (8) + CI; .xls reading via `xls_reader` restored |
-| **v2.1.0** | IUPAC 2015 validity checks (C < 0 warning, monotonicity check); named physical constants; `np.trapz` compatibility fix for NumPy < 2.0; `setup_plot_style()` isolated to prevent import side-effects; Type I(a)/I(b) sub-classification; BJH adsorption branch noted in report |
-| **v2.0.0** | T-Plot module (`tplot_analysis.py`); 6-feature hysteresis scoring (H1–H4); confidence level output; N₂ cavitation marker on BJH panel |
-| **v1.0.0** | Initial release: BET regression, BJH PSD, IUPAC isotherm classification, 4-panel figure |
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ---
 
