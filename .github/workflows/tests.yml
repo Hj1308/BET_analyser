@@ -30,5 +30,7 @@ jobs:
       - name: Install NumPy 2.x
         if: matrix.numpy != ''
         run: pip install "numpy${{ matrix.numpy }}"
+      - name: Byte-compile all modules
+        run: python -m py_compile app_bet.py bet_analysis.py tplot_analysis.py langmuir.py rouquerol.py xls_reader.py
       - name: Run unit tests
         run: python -m pytest tests/ -v
