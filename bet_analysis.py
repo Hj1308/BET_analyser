@@ -52,6 +52,19 @@ N2_CAVITATION_NM      = 3.4     # forced closure diameter (nm) for N₂ at 77 K
 
 
 # ══════════════════════════════════════════════════════════════
+# IUPAC VALIDITY THRESHOLDS — Thommes et al. (2015)
+# ══════════════════════════════════════════════════════════════
+
+# §5.1.1 — BET C constant and Point B.
+BET_C_NOT_APPLICABLE      = 2.0    # C < 2  : Type III/V — BET not applicable
+BET_C_POINT_B_QUESTIONABLE = 50.0  # C < 50 : Point B not a single point; n_m doubtful
+BET_C_KNEE_SHARP          = 80.0   # C >= 80: sharp knee, Point B well defined
+
+# §7.2 / §9 — BJH (Kelvin-equation) underestimates narrow mesopores by 20-30%.
+BJH_NARROW_MESOPORE_NM    = 10.0   # peak diameter (nm) below which BJH is unreliable
+
+
+# ══════════════════════════════════════════════════════════════
 # MATPLOTLIB — publication settings
 # ══════════════════════════════════════════════════════════════
 
@@ -260,21 +273,19 @@ def read_bet_xls(filepath: str) -> dict:
 # ══════════════════════════════════════════════════════════════
 
 # Normalised loop-area threshold above which an adsorption/desorption branch
-# pair is treated as a genuine hysteresis loop. This is a heuristic, not a
-# physical law. On the audit samples the normalised area sits at:
-#   - 13BgOH.xls : 0.0125  (below -> no loop)
-#   - BC.xls     : 0.0221  (above -> loop)
-#   - g-OH.xls   : 0.0459  (well above -> loop)
-# A higher threshold is tempting (0.02 is a common first guess, and would
-# still separate BC/g-OH from 13BgOH), but it over-sweeps: the synthetic
-# Type IV (H1) fixture has a genuine loop with a normalised area of ~0.0134,
-# and 0.02 would push it out of the hysteresis branch and misclassify it as
-# Type VI. The chosen value therefore has to sit between 13BgOH (0.0125) and
-# that fixture (0.0134); the margin is narrow and should be revisited if the
-# normalisation changes. Moving the threshold to 0.025 would flip BC to "no
-# loop". Exposed as a keyword argument on classify_isotherm so it can be
-# overridden.
-HYSTERESIS_AREA_THRESHOLD = 0.013
+# pair is treated as a mesopore capillary-condensation loop (the Type IV/V
+# signature). This is a heuristic, not a physical law. Measured normalised
+# areas on the audit samples:
+#   - 13BgOH.xls : 0.0125   (below -> no loop)
+#   - 14H.xls    : 0.0215   (~8% above -> loop, uncertain)
+#   - 9.xls      : 0.0221   (~10% above -> loop, uncertain)
+#   - g-OH.xls   : 0.0459   (well above -> loop)
+#   - 10.xls     : 0.0518   (well above -> loop)
+# Synthetic fixtures: TypeIV_H1 = 0.0334, TypeV_H2 = 0.0317 (both above).
+# 14H and 9 sit only ~8-10% above the threshold, so classifications whose loop
+# area is near 0.02 are uncertain. Exposed as a keyword argument on
+# classify_isotherm so it can be overridden.
+HYSTERESIS_AREA_THRESHOLD = 0.02
 
 # Minimum number of desorption-branch points required before a loop can be
 # defined at all; a 1-2 point branch cannot close a loop.
@@ -342,16 +353,22 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
     Ref: Thommes et al., Pure Appl. Chem. 87, 1051–1069 (2015).
 
     Strategy:
-      Step 1 — detect hysteresis via loop area (→ Type IV or V)
+      Step 1 — detect a capillary-condensation loop via loop area (→ Type IV/V)
       Step 2 — examine low-p/p0 concavity (IV vs V)
-      Step 3 — no hysteresis: shape analysis (I, II, III, VI)
+      Step 3 — no condensation loop: shape analysis (I, II, III, VI)
       Step 4 — Type I sub-classification: I(a) vs I(b)
 
     ``hysteresis_threshold`` is the minimum normalised loop area
-    (:func:`hysteresis_loop`) for a branch pair to count as a hysteresis loop.
+    (:func:`hysteresis_loop`) for a branch pair to count as a
+    *capillary-condensation* loop (the Type IV/V signature per Thommes et al.
+    2015 §4.2), **not** the presence of any hysteresis at all — a small loop
+    (e.g. an H3 loop sitting on a Type II adsorption branch, §4.3.2) falls
+    below this threshold and is reported by :func:`classify_hysteresis`
+    instead.
     """
     pp0_a, Va_a = ads[:, 0], ads[:, 1]
-    has_hyst    = hysteresis_loop(ads, des)["norm_area"] >= hysteresis_threshold
+    has_condensation_loop = \
+        hysteresis_loop(ads, des)["norm_area"] >= hysteresis_threshold
 
     # -- Concavity at low relative pressure ----------------------
     low_mask = pp0_a < 0.35
@@ -360,8 +377,12 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
         y_l = Va_a[low_mask]
         d2  = np.gradient(np.gradient(y_l, x_l), x_l)
         concave_low = float(d2.mean()) < 0
+        concave_low_measured = True
     else:
+        # Fewer than 3 points below p/p0 = 0.35: concavity is defaulted, not
+        # measured. Mark it so the classification can refuse to guess.
         concave_low = True
+        concave_low_measured = False
 
     # -- Plateau check at high p/p0 ------------------------------
     high_mask = pp0_a > 0.75
@@ -397,13 +418,20 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
         is_type_Ia = False
 
     # -- Classification ------------------------------------------
-    if is_stepped and not has_hyst:
+    # TODO: Type IV(b) is currently unreachable. Per Thommes et al. (2015) §4.2,
+    # a mesoporous adsorbent with pores below a critical width (~4 nm for N2 in
+    # cylindrical pores at 77 K) gives a completely *reversible* Type IVb
+    # isotherm with no hysteresis loop. Our classifier can only send such a
+    # sample to I/II/III/VI. Discriminating IV(a)/IV(b) needs pore-size input
+    # and is deferred to a later phase; every Type IV produced here is
+    # hysteresis-bearing, hence the "Type IV(a)" label below.
+    if is_stepped and not has_condensation_loop:
         iso_type = "Type VI"
         explanation = ("Stepped isotherm. Multilayer adsorption on a "
                        "uniform non-porous surface.")
-    elif has_hyst:
+    elif has_condensation_loop:
         if concave_low:
-            iso_type = "Type IV"
+            iso_type = "Type IV(a)"
             explanation = ("Hysteresis loop present + concave at low p/p₀. "
                            "Characteristic of mesoporous materials. "
                            "Monolayer–multilayer adsorption followed by "
@@ -429,7 +457,7 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
                 explanation = ("Steep rise extending to p/p₀ ~ 0.1 — indicates "
                                "micropores in range 1–2.5 nm plus possibly narrow "
                                "mesopores. Common in MOFs and hierarchical carbons.")
-        elif concave_low:
+        elif concave_low and concave_low_measured:
             # Type II = unrestricted monolayer–multilayer adsorption: uptake
             # rises without limit as p/p0 -> 1, so a plateau is not required
             # (a genuine Type II has none). ``concave_low and has_plateau``
@@ -437,23 +465,30 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
             # still a strong-interaction multilayer isotherm, not Type III.
             iso_type = "Type II"
             explanation = ("Concave at low p/p₀ — strong adsorbate–adsorbent "
-                           "interaction. Non-porous or macroporous material "
-                           "with unrestricted mono- to multilayer adsorption.")
+                           "interaction. Unrestricted monolayer–multilayer "
+                           "adsorption whose thickness increases without limit "
+                           "as p/p0 → 1. Characteristic of nonporous or "
+                           "macroporous adsorbents; the same adsorption-branch "
+                           "shape is also carried by non-rigid plate-like "
+                           "aggregates, where it is accompanied by an H3 "
+                           "hysteresis loop (Thommes et al. 2015 §4.2, §4.3.2).")
         elif not concave_low:
             iso_type = "Type III"
             explanation = ("Convex throughout. Weak adsorbate–adsorbent "
                            "interactions, multilayer adsorption.")
         else:
-            # Defensive fallback — should be unreachable (concave_low is a
-            # bool), but Type III is deliberately not the catch-all.
+            # concave_low was defaulted to True because fewer than 3 points
+            # lie below p/p0 = 0.35 — the concavity is a guess, not a
+            # measurement, so we decline to classify.
             iso_type = "Unclassified"
-            explanation = (f"Shape could not be classified confidently "
-                           f"(concave_low={concave_low}, "
-                           f"has_plateau={has_plateau}, "
-                           f"steep_init={steep_init}).")
+            explanation = ("Concavity at low p/p₀ could not be measured "
+                           "(fewer than 3 points below p/p0 = 0.35), so the "
+                           "isotherm cannot be classified confidently.")
 
     return {"type": iso_type, "explanation": explanation,
-            "has_hysteresis": has_hyst, "concave_low": concave_low,
+            "has_hysteresis": has_condensation_loop,
+            "has_condensation_loop": has_condensation_loop,
+            "concave_low": concave_low,
             "has_plateau": has_plateau}
 
 
@@ -873,6 +908,54 @@ def _label_panel(ax, letter):
 # 6. SUMMARY REPORT
 # ══════════════════════════════════════════════════════════════
 
+def validity_warnings(s: dict, iso_cls: dict) -> list:
+    """IUPAC-validity warnings for the reported quantities (Thommes et al. 2015).
+
+    Report-text only: returns strings for display and never alters a computed
+    value. ``s`` is the instrument ``summary`` dict from :func:`read_bet_xls`;
+    ``iso_cls`` is the result of :func:`classify_isotherm`.
+    """
+    notes = []
+    C = s.get("C", np.nan)
+    iso_type = iso_cls.get("type", "")
+
+    # §5.1.1 — BET C constant and Point B.
+    if np.isfinite(C):
+        if C < BET_C_NOT_APPLICABLE:
+            notes.append("BET C < 2 — the isotherm is Type III/V and the BET "
+                         "method is not applicable (Thommes et al. 2015 §5.1.1).")
+        elif C < BET_C_POINT_B_QUESTIONABLE:
+            notes.append("BET C < 50 — Point B cannot be identified as a single "
+                         "point and the interpretation of n_m is questionable "
+                         "(Thommes et al. 2015 §5.1.1).")
+        elif C >= BET_C_KNEE_SHARP:
+            notes.append("BET C ≥ 80 — the knee is sharp and Point B is well "
+                         "defined (Thommes et al. 2015 §5.1.1).")
+
+    # §5.2.2 / §5.1.1 — Type I BET area is an apparent area.
+    if iso_type in ("Type I(a)", "Type I(b)"):
+        notes.append("Type I isotherm — the BET area is an apparent surface "
+                     "area (an adsorbent 'fingerprint'), not a realistic "
+                     "probe-accessible area (Thommes et al. 2015 §5.2.2, §5.1.1).")
+
+    # §7.2 / §9 — BJH underestimates narrow mesopores.
+    rp_peak = s.get("rp_peak_BJH", np.nan)
+    if np.isfinite(rp_peak):
+        peak_diam = rp_peak * 2.0
+        if peak_diam < BJH_NARROW_MESOPORE_NM:
+            notes.append(f"BJH peak diameter {peak_diam:.1f} nm is below 10 nm — "
+                         "Kelvin-equation (BJH) procedures underestimate narrow "
+                         "mesopore size by ~20-30% (Thommes et al. 2015 §7.2, §9).")
+
+    # §7.1 — Gurvich total pore volume needs a near-horizontal high-p/p0 region.
+    if not iso_cls.get("has_plateau", False):
+        notes.append("The isotherm does not approach a plateau near p/p0 = 1 — "
+                     "the Gurvich-rule total pore volume is not valid for this "
+                     "(composite Type IV + Type II) isotherm (Thommes et al. 2015 §7.1).")
+
+    return notes
+
+
 def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
                  bet_res: dict, sample_name: str):
     s = data["summary"]
@@ -900,6 +983,12 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
         print("\n  ⚠  WARNING: BET C constant is NEGATIVE.")
         print("     The selected p/p₀ range is outside the valid BET region.")
         print("     Per IUPAC 2015, revise start_pt/end_pt (0.05 ≤ p/p₀ ≤ 0.35).")
+
+    notes = validity_warnings(s, iso_cls)
+    if notes:
+        print("\n  Validity notes (IUPAC 2015)")
+        for n in notes:
+            print(f"    ⚠  {n}")
 
     print(f"\n  BET Regression  (points {s['start_pt']}–{s['end_pt']})")
     print(f"    Slope     : {bet_res['slope']:.6f}")
@@ -929,6 +1018,14 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
         feat_rows = [[k, str(v)] for k, v in h["features"].items()]
         print(tabulate(feat_rows, headers=["Feature", "Value"],
                        tablefmt="simple"))
+
+    no_condensation_types = ("Type I(a)", "Type I(b)", "Type II", "Type III",
+                             "Type VI")
+    if iso_cls["type"] in no_condensation_types and h["type"] != "None":
+        print(f"\n  Note: a {h['type']} hysteresis loop together with a "
+              f"{iso_cls['type']} isotherm is an expected combination — an H3 "
+              "loop sits on a Type II adsorption branch by definition "
+              "(Thommes et al. 2015 §4.3.2).")
 
     ratio = s["S_BET"] / s["S_BJH"] if s["S_BJH"] else float("nan")
     print(f"\n  BET vs BJH Comparison")
