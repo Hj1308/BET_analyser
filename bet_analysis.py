@@ -340,16 +340,22 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
     Ref: Thommes et al., Pure Appl. Chem. 87, 1051–1069 (2015).
 
     Strategy:
-      Step 1 — detect hysteresis via loop area (→ Type IV or V)
+      Step 1 — detect a capillary-condensation loop via loop area (→ Type IV/V)
       Step 2 — examine low-p/p0 concavity (IV vs V)
-      Step 3 — no hysteresis: shape analysis (I, II, III, VI)
+      Step 3 — no condensation loop: shape analysis (I, II, III, VI)
       Step 4 — Type I sub-classification: I(a) vs I(b)
 
     ``hysteresis_threshold`` is the minimum normalised loop area
-    (:func:`hysteresis_loop`) for a branch pair to count as a hysteresis loop.
+    (:func:`hysteresis_loop`) for a branch pair to count as a
+    *capillary-condensation* loop (the Type IV/V signature per Thommes et al.
+    2015 §4.2), **not** the presence of any hysteresis at all — a small loop
+    (e.g. an H3 loop sitting on a Type II adsorption branch, §4.3.2) falls
+    below this threshold and is reported by :func:`classify_hysteresis`
+    instead.
     """
     pp0_a, Va_a = ads[:, 0], ads[:, 1]
-    has_hyst    = hysteresis_loop(ads, des)["norm_area"] >= hysteresis_threshold
+    has_condensation_loop = \
+        hysteresis_loop(ads, des)["norm_area"] >= hysteresis_threshold
 
     # -- Concavity at low relative pressure ----------------------
     low_mask = pp0_a < 0.35
@@ -402,11 +408,11 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
     # sample to I/II/III/VI. Discriminating IV(a)/IV(b) needs pore-size input
     # and is deferred to a later phase; every Type IV produced here is
     # hysteresis-bearing, hence the "Type IV(a)" label below.
-    if is_stepped and not has_hyst:
+    if is_stepped and not has_condensation_loop:
         iso_type = "Type VI"
         explanation = ("Stepped isotherm. Multilayer adsorption on a "
                        "uniform non-porous surface.")
-    elif has_hyst:
+    elif has_condensation_loop:
         if concave_low:
             iso_type = "Type IV(a)"
             explanation = ("Hysteresis loop present + concave at low p/p₀. "
@@ -458,7 +464,9 @@ def classify_isotherm(ads: np.ndarray, des: np.ndarray,
                            f"steep_init={steep_init}).")
 
     return {"type": iso_type, "explanation": explanation,
-            "has_hysteresis": has_hyst, "concave_low": concave_low,
+            "has_hysteresis": has_condensation_loop,
+            "has_condensation_loop": has_condensation_loop,
+            "concave_low": concave_low,
             "has_plateau": has_plateau}
 
 
@@ -934,6 +942,14 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
         feat_rows = [[k, str(v)] for k, v in h["features"].items()]
         print(tabulate(feat_rows, headers=["Feature", "Value"],
                        tablefmt="simple"))
+
+    no_condensation_types = ("Type I(a)", "Type I(b)", "Type II", "Type III",
+                             "Type VI")
+    if iso_cls["type"] in no_condensation_types and h["type"] != "None":
+        print(f"\n  Note: a {h['type']} hysteresis loop together with a "
+              f"{iso_cls['type']} isotherm is an expected combination — an H3 "
+              "loop sits on a Type II adsorption branch by definition "
+              "(Thommes et al. 2015 §4.3.2).")
 
     ratio = s["S_BET"] / s["S_BJH"] if s["S_BJH"] else float("nan")
     print(f"\n  BET vs BJH Comparison")

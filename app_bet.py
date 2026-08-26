@@ -569,6 +569,16 @@ with tab_overview:
         else:
             st.info("No hysteresis detected.")
 
+        no_condensation_types = ("Type I(a)", "Type I(b)", "Type II", "Type III",
+                                 "Type VI")
+        if iso_cls["type"] in no_condensation_types and hyst_cls["type"] != "None":
+            st.info(
+                f"A {hyst_cls['type']} hysteresis loop together with a "
+                f"{iso_cls['type']} isotherm is an expected combination — an H3 "
+                "loop sits on a Type II adsorption branch by definition "
+                "(Thommes et al. 2015 §4.3.2)."
+            )
+
     st.divider()
 
     # ─ Summary table
