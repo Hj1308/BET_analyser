@@ -426,7 +426,7 @@ with st.sidebar:
 
     st.divider()
     st.markdown(
-        "**DOI:** [10.5281/zenodo.22101160](https://doi.org/10.5281/zenodo.22101160)  \n"
+        "**DOI:** [10.5281/zenodo.22116897](https://doi.org/10.5281/zenodo.22116897)  \n"
         "MIT License · [GitHub](https://github.com/Hj1308/BET_analyser)"
     )
 
@@ -1192,6 +1192,6 @@ with tab_download:
     st.markdown("• **📚 Cite this tool**")
     citation = (
         "Jafari, H. (2026). BET_analyser: Publication-Quality BET/BJH + T-Plot "
-        "Analysis Tool (v2.3.0). Zenodo. DOI: 10.5281/zenodo.22101160"
+        "Analysis Tool (v3.0.0). Zenodo. DOI: 10.5281/zenodo.22116897"
     )
     st.code(citation, language=None)

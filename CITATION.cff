@@ -3,9 +3,9 @@ message: "If you use BET_analyser, please cite it as below."
 type: software
 title: "BET_analyser: Publication-Quality BET/BJH + T-Plot Analysis Tool"
 version: "3.0.0"
-date-released: "2026-08-25"
+date-released: "2026-08-26"
 authors:
   - family-names: "Jafari"
     given-names: "Hoda"
-doi: "10.5281/zenodo.22101160"
+doi: "10.5281/zenodo.22116897"
 url: "https://github.com/Hj1308/BET_analyser"
