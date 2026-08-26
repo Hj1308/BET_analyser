@@ -28,6 +28,17 @@ condensation sets in. This module fits both segments and reports the derived
 quantities; a sample with no detectable micropore region is reported with a
 "no meaningful bend" flag rather than a forced split.
 
+Data-sufficiency gate
+---------------------
+Line 1 needs adsorption points in the micropore-filling region (p/p0 < 0.08,
+Thommes et al. 2015 §6.1). If the data has fewer than ``MIN_LINE1_POINTS``
+points there, the micropore quantities (V_micro, S_micro, S_total, t_bend, 2t)
+cannot be determined and are returned as ``None`` with
+``micropore_analysis_possible`` False; the external surface area (line 2) is
+still reported on its own. This is a *measurement limitation*, not a value of
+zero — returning 0.0 here would read as "confirmed no micropores" when the
+truth is "this measurement cannot answer the question".
+
 Reference t-curve
 -----------------
 The reference t-curve must be measured on a non-porous sample with the *same
@@ -177,12 +188,33 @@ MIN_SEGMENT_POINTS = 3
 # B-AD-009: the mean pore diameter 2t is unreliable below 0.7 nm.
 BEND_2T_MIN_NM = 0.7
 
+# ── Line-1 (micropore) bounds and sufficiency gate ──────────────
+# Line 1 models micropore filling, which occurs below p/p0 ~ 0.08 and mostly
+# below ~0.015 (Thommes et al. 2015 §6.1). It must therefore be allowed BELOW
+# the Harkins-Jura validity floor (HJ_VALID_T_MIN) that bounds line 2. The
+# line-1 floor is anchored at p/p0 = 0.005 (the low end of the primary filling
+# range): that is t ~ 2.45 Å on the Harkins-Jura curve and t ~ 3.47 Å on the
+# Halsey curve. The per-curve value is computed by line1_t_min().
+LINE1_P_MIN = 0.005
+LINE1_T_MIN = 2.4     # rounded Harkins-Jura t at LINE1_P_MIN; used as a UI floor
+
+# Data-sufficiency gate: line 1 needs at least this many adsorption points in
+# the micropore region p/p0 < LINE1_P_MAX, else micropore analysis is refused.
+MIN_LINE1_POINTS = 3
+LINE1_P_MAX = 0.08
+
+
+def line1_t_min(reference_curve: str) -> float:
+    """Line-1 floor thickness (Å) for a reference curve at p/p0 = LINE1_P_MIN."""
+    return float(REFERENCE_CURVES[reference_curve](np.asarray([LINE1_P_MIN]))[0])
+
 
 # ══════════════════════════════════════════════════════════════
 # TWO-SEGMENT FIT (module-level, pure)
 # ══════════════════════════════════════════════════════════════
 
-def fit_two_segment(t, v, t_min: float, t_max: float) -> dict:
+def fit_two_segment(t, v, t_min: float, t_max: float,
+                    split_t_min: float = HJ_VALID_T_MIN) -> dict:
     """
     Fit the two-segment t-plot construction of Lippens & de Boer.
 
@@ -201,8 +233,10 @@ def fit_two_segment(t, v, t_min: float, t_max: float) -> dict:
     count) to relocate the bend would hide a genuinely small mean pore diameter
     — exactly the silent tuning this review exists to prevent.
 
-    Both segments must lie inside ``[t_min, t_max]``; the caller is expected to
-    keep that inside ``[HJ_VALID_T_MIN, HJ_VALID_T_MAX]``.
+    Line 1 may use points down to ``t_min`` (which the caller may set below the
+    Harkins-Jura floor via ``LINE1_T_MIN``, so the micropore region is included);
+    line 2 is confined to ``[split_t_min, t_max]`` — the split point is kept at
+    or above ``split_t_min`` (normally ``HJ_VALID_T_MIN``).
 
     Physical constraints each raise a ``UserWarning`` and set a flag in the
     returned dict (never a silent clamp):
@@ -215,13 +249,16 @@ def fit_two_segment(t, v, t_min: float, t_max: float) -> dict:
     ----------
     t, v : array-like — statistical thickness (Å) and adsorbed amount
         (cm³(STP)/g), same length.
-    t_min, t_max : float — window bounds (Å); only points within are used.
+    t_min, t_max : float — window bounds (Å); line 1 reaches down to ``t_min``,
+        line 2 up to ``t_max``.
+    split_t_min : float — the split (bend) must be at or above this thickness
+        (line 2 never dips below it).
 
     Returns
     -------
     dict with the derived quantities, per-segment counts, constraint flags and
-    any emitted warnings. Raises ValueError if fewer than
-    ``2 * MIN_SEGMENT_POINTS`` points fall in the window.
+    any emitted warnings. Raises ValueError if no split leaves
+    ``MIN_SEGMENT_POINTS`` points in each segment.
     """
     t = np.asarray(t, dtype=float)
     v = np.asarray(v, dtype=float)
@@ -245,6 +282,8 @@ def fit_two_segment(t, v, t_min: float, t_max: float) -> dict:
 
     best = None
     for split in range(MIN_SEGMENT_POINTS, n - MIN_SEGMENT_POINTS + 1):
+        if t[split] < split_t_min:
+            continue  # line 2 would dip below the Harkins-Jura floor
         t1, v1 = t[:split], v[:split]
         t2, v2 = t[split:], v[split:]
 
@@ -293,6 +332,13 @@ def fit_two_segment(t, v, t_min: float, t_max: float) -> dict:
         }
         if best is None or cand["sse"] < best["sse"]:
             best = cand
+
+    if best is None:
+        raise ValueError(
+            f"two-segment fit needs at least {MIN_SEGMENT_POINTS} points below "
+            f"and at/above the split floor ({split_t_min:.2f} Å); no valid "
+            f"split exists in window ({t_min:.2f}-{t_max:.2f} Å)."
+        )
 
     slope1 = best["slope1"]
     slope2 = best["slope2"]
@@ -401,6 +447,40 @@ def fit_two_segment(t, v, t_min: float, t_max: float) -> dict:
     }
 
 
+def fit_line2_only(t, v, t_min: float, t_max: float) -> dict:
+    """Fit line 2 alone (external surface area) over ``[t_min, t_max]``.
+
+    Used when the two-segment fit is not possible (insufficient micropore-region
+    points): the external surface area is still measurable from the multilayer
+    region, so it is reported on its own, clearly labelled, without any
+    micropore quantity.
+    """
+    t = np.asarray(t, dtype=float)
+    v = np.asarray(v, dtype=float)
+    mask = (t >= t_min) & (t <= t_max)
+    t2 = t[mask]
+    v2 = v[mask]
+    order = np.argsort(t2)
+    t2, v2 = t2[order], v2[order]
+    n = len(t2)
+    if n < MIN_SEGMENT_POINTS:
+        raise ValueError(
+            f"line-2 fit needs at least {MIN_SEGMENT_POINTS} points in window "
+            f"({t_min:.2f}-{t_max:.2f} Å) but only {n} are available."
+        )
+    reg = linregress(t2, v2)
+    slope2 = float(reg.slope)
+    intercept2 = float(reg.intercept)
+    return {
+        "slope_2"        : round(slope2, 6),
+        "intercept_2"    : round(intercept2, 6),
+        "S_external_m2g" : round(slope2 * N2_TPLOT_SLOPE_FACTOR, 2),
+        "R2_2"           : round(float(reg.rvalue ** 2), 5),
+        "n_points_2"     : n,
+        "t_range"        : (round(float(t_min), 2), round(float(t_max), 2)),
+    }
+
+
 # ══════════════════════════════════════════════════════════════
 # T-PLOT ANALYSER CLASS
 # ══════════════════════════════════════════════════════════════
@@ -453,33 +533,87 @@ class TPlotAnalyser:
     # FIT
     # ──────────────────────────────────────────────────────────
 
-    def fit_tplot(self, t_min: float = HJ_VALID_T_MIN,
+    def fit_tplot(self, t_min: float = LINE1_T_MIN,
                   t_max: float = HJ_VALID_T_MAX) -> dict:
         """
         Fit the two-segment t-plot (Lippens & de Boer construction).
 
         Line 1 (origin) -> total surface area; line 2 (free intercept) ->
-        external surface area (slope) and micropore volume (intercept). Both
-        segments are kept inside ``[HJ_VALID_T_MIN, HJ_VALID_T_MAX]``.
+        external surface area (slope) and micropore volume (intercept). Line 1
+        is allowed down to the per-curve ``line1_t_min`` so it can reach the
+        micropore-filling region; line 2 is confined to
+        ``[HJ_VALID_T_MIN, HJ_VALID_T_MAX]``.
 
-        Returns the dict from :func:`fit_two_segment` plus ``reference_curve``,
-        ``S_BET_m2g`` and the ``S_ext_m2g`` / ``R2_tplot`` / ``intercept`` /
-        ``slope`` compatibility keys.
+        A data-sufficiency gate runs first: if the adsorption data has fewer
+        than ``MIN_LINE1_POINTS`` points below p/p0 = ``LINE1_P_MAX``, the
+        micropore quantities (V_micro, S_micro, S_total, t_bend, 2t) cannot be
+        determined and are returned as ``None`` with
+        ``micropore_analysis_possible`` False; only the external surface area
+        (line 2) is reported in that case.
+
+        Returns the dict from :func:`fit_two_segment` (or a line-2-only dict)
+        plus ``reference_curve``, ``S_BET_m2g``, the sufficiency-gate keys and
+        the ``S_ext_m2g`` / ``R2_tplot`` / ``intercept`` / ``slope``
+        compatibility keys.
         """
-        t_min = max(float(t_min), HJ_VALID_T_MIN)
+        t_min = max(float(t_min), line1_t_min(self.reference_curve))
         t_max = min(float(t_max), HJ_VALID_T_MAX)
 
-        fit = fit_two_segment(self.t, self.v, t_min, t_max)
+        n_below = int((self.p < LINE1_P_MAX).sum())
+        gate_passed = n_below >= MIN_LINE1_POINTS
 
-        result = dict(fit)
+        if gate_passed:
+            fit = fit_two_segment(self.t, self.v, t_min, t_max,
+                                  split_t_min=HJ_VALID_T_MIN)
+            result = dict(fit)
+        else:
+            line2 = fit_line2_only(self.t, self.v, HJ_VALID_T_MIN, t_max)
+            result = {
+                "slope_1": None,
+                "slope_2": line2["slope_2"],
+                "intercept_2": line2["intercept_2"],
+                "S_total_m2g": None,
+                "S_external_m2g": line2["S_external_m2g"],
+                "s_micro_raw": None,
+                "S_micro_m2g": None,
+                "V_micro_raw_cm3g": None,
+                "V_micro_cm3g": None,
+                "t_bend_A": None,
+                "2t_nm": None,
+                "R2_1": None,
+                "R2_2": line2["R2_2"],
+                "n_points_1": 0,
+                "n_points_2": line2["n_points_2"],
+                "n_points": line2["n_points_2"],
+                "split_index": None,
+                "t_range": line2["t_range"],
+                "flags": {},
+                "warnings": [],
+                "clamped": False,
+                "low_confidence": False,
+                "low_confidence_reason": "",
+            }
+
         result["reference_curve"] = self.reference_curve
         result["S_BET_m2g"] = round(self.sbet, 2)
+        result["micropore_analysis_possible"] = gate_passed
+        result["n_points_below_pp008"] = n_below
+        result["micropore_analysis_reason"] = (
+            "" if gate_passed else
+            f"only {n_below} adsorption point(s) below p/p0 = 0.08 (need at "
+            f"least {MIN_LINE1_POINTS}); micropore volume and surface area "
+            "cannot be determined from this measurement. A t-plot micropore "
+            "analysis needs more points below p/p0 = 0.08, ideally down to "
+            "1e-3 or lower (Thommes et al. 2015 §6.1), which also recommends "
+            "argon at 87 K over nitrogen at 77 K where surface functional "
+            "groups interact with the N2 quadrupole."
+        )
         # Compatibility keys (Phase 1A naming) — S_ext is now the *external*
         # area from line 2, not the old single-line slope.
-        result["S_ext_m2g"] = fit["S_external_m2g"]
-        result["R2_tplot"] = fit["R2_2"]
-        result["intercept"] = fit["intercept_2"]
-        result["slope"] = fit["slope_2"]
+        result["S_ext_m2g"] = result["S_external_m2g"]
+        result["R2_tplot"] = result["R2_2"]
+        result["intercept"] = result["intercept_2"]
+        result["slope"] = result["slope_2"]
         return result
 
     # ──────────────────────────────────────────────────────────
@@ -513,47 +647,65 @@ class TPlotAnalyser:
     # FULL REPORT
     # ──────────────────────────────────────────────────────────
 
-    def full_tplot_report(self, t_min: float = HJ_VALID_T_MIN,
+    def full_tplot_report(self, t_min: float = LINE1_T_MIN,
                           t_max: float = HJ_VALID_T_MAX) -> dict:
         """Run the two-segment fit and pore distribution — all together."""
-        fit  = self.fit_tplot(t_min, t_max)
-        dist = self.pore_distribution(fit["V_micro_cm3g"])
-        return {**fit, **dist}
-
-    # ──────────────────────────────────────────────────────────
-    # PRINT REPORT
-    # ──────────────────────────────────────────────────────────
+        fit = self.fit_tplot(t_min, t_max)
+        if fit["micropore_analysis_possible"]:
+            dist = self.pore_distribution(fit["V_micro_cm3g"])
+            return {**fit, **dist}
+        # Micropore volume unknown -> pore distribution is not computable.
+        no_dist = {
+            "V_meso_cm3g": None,
+            "V_total_cm3g": None,
+            "Micropore_%": None,
+            "Meso_Macro_%": None,
+        }
+        return {**fit, **no_dist}
 
     def print_report(self, sample_name: str = "Sample",
-                     t_min: float = HJ_VALID_T_MIN,
+                     t_min: float = LINE1_T_MIN,
                      t_max: float = HJ_VALID_T_MAX):
         res = self.full_tplot_report(t_min, t_max)
         sep = "=" * 58
         print(f"\n{sep}")
         print(f"  T-Plot Report ({res['reference_curve']}) — {sample_name}")
         print(sep)
-        print(f"  Fit window     : {res['t_range'][0]}–{res['t_range'][1]} Å  "
-              f"({res['n_points_1']} + {res['n_points_2']} pts)")
-        print(f"  R² (line 1/2)  : {res['R2_1']} / {res['R2_2']}")
+        if res["micropore_analysis_possible"]:
+            print(f"  Fit window     : {res['t_range'][0]}–{res['t_range'][1]} Å  "
+                  f"({res['n_points_1']} + {res['n_points_2']} pts)")
+            print(f"  R² (line 1/2)  : {res['R2_1']} / {res['R2_2']}")
+        else:
+            print(f"  Fit window     : {res['t_range'][0]}–{res['t_range'][1]} Å  "
+                  f"({res['n_points_2']} pts, line 2 only)")
+            print(f"  ⚠ Micropore analysis not possible: {res['micropore_analysis_reason']}")
         print(f"")
         print(f"  Surface Area")
         print(f"    S_BET        : {res['S_BET_m2g']:.2f}  m² g⁻¹  (monolayer)")
-        print(f"    S_total      : {res['S_total_m2g']:.2f}  m² g⁻¹  (line 1)")
-        print(f"    S_external   : {res['S_external_m2g']:.2f}  m² g⁻¹  (line 2)")
-        print(f"    S_micro      : {res['S_micro_m2g']:.2f}  m² g⁻¹  (total − external)")
+        if res["S_total_m2g"] is not None:
+            print(f"    S_total      : {res['S_total_m2g']:.2f}  m² g⁻¹  (line 1)")
+            print(f"    S_external   : {res['S_external_m2g']:.2f}  m² g⁻¹  (line 2)")
+            print(f"    S_micro      : {res['S_micro_m2g']:.2f}  m² g⁻¹  (total − external)")
+        else:
+            print(f"    S_external   : {res['S_external_m2g']:.2f}  m² g⁻¹  (line 2 only)")
+            print(f"    S_total      : not reported (micropore region undersampled)")
+            print(f"    S_micro      : not reported (micropore region undersampled)")
         print(f"")
-        print(f"  Pore Volumes")
-        print(f"    V_total      : {res['V_total_cm3g']:.5f}  cm³ g⁻¹")
-        print(f"    V_micro      : {res['V_micro_cm3g']:.5f}  cm³ g⁻¹   ({res['Micropore_%']}%)")
-        print(f"    V_meso+macro : {res['V_meso_cm3g']:.5f}  cm³ g⁻¹   ({res['Meso_Macro_%']}%)")
-        print(f"      ↳ V_macro needs Hg porosimetry")
+        if res["V_micro_cm3g"] is not None:
+            print(f"  Pore Volumes")
+            print(f"    V_total      : {res['V_total_cm3g']:.5f}  cm³ g⁻¹")
+            print(f"    V_micro      : {res['V_micro_cm3g']:.5f}  cm³ g⁻¹   ({res['Micropore_%']}%)")
+            print(f"    V_meso+macro : {res['V_meso_cm3g']:.5f}  cm³ g⁻¹   ({res['Meso_Macro_%']}%)")
+            print(f"      ↳ V_macro needs Hg porosimetry")
+        else:
+            print(f"  Pore Volumes   : not reported (micropore volume undetermined)")
         print(f"")
         if res["t_bend_A"] is not None:
             print(f"  Bend point")
             print(f"    t_bend       : {res['t_bend_A']:.3f} Å")
             print(f"    2t (diameter): {res['2t_nm']:.3f} nm")
         else:
-            print(f"  Bend point     : none (no meaningful split)")
+            print(f"  Bend point     : none (not fitted)")
         if res["warnings"]:
             print(f"")
             print(f"  Warnings       : {', '.join(res['warnings'])}")
@@ -566,15 +718,17 @@ class TPlotAnalyser:
     # ──────────────────────────────────────────────────────────
 
     def plot_tplot(self, save_path: str = "tplot.png", sample_name: str = "Sample",
-                   t_min: float = HJ_VALID_T_MIN,
+                   t_min: float = LINE1_T_MIN,
                    t_max: float = HJ_VALID_T_MAX) -> str:
         """
         2-panel T-Plot figure:
-          [A] t-plot with the two fitted lines + bend point
-          [B] Pore type distribution bar chart
+          [A] t-plot with the fitted lines + bend point (line 1/bend only when
+              micropore analysis was possible)
+          [B] Pore type distribution bar chart (omitted when V_micro unknown)
         """
         res  = self.full_tplot_report(t_min, t_max)
         t_lo, t_hi = res["t_range"]
+        has_micropore = res["micropore_analysis_possible"]
 
         fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
 
@@ -583,28 +737,33 @@ class TPlotAnalyser:
         ax.scatter(self.t, self.v, color=C_MICRO, s=35, zorder=5,
                    label="Experimental data")
 
-        # Highlight the two fitted segments
         order = np.argsort(self.t)
         t_s, v_s = self.t[order], self.v[order]
-        split = res["n_points_1"]
-        ax.scatter(t_s[:split], v_s[:split], color=C_TOTAL, s=55, zorder=6,
-                   marker="o", label="Line 1 (total)")
-        ax.scatter(t_s[split:], v_s[split:], color=C_EXT, s=55, zorder=6,
-                   marker="s", label="Line 2 (external)")
 
-        # Line 1: through the origin
-        t_line1 = np.linspace(0, res["t_bend_A"] or self.t.min(), 100)
-        ax.plot(t_line1, res["slope_1"] * t_line1, "-", color=C_TOTAL, lw=1.8,
-                label=f"Total surface area  S={res['S_total_m2g']:.1f} m²/g")
+        if has_micropore:
+            # Highlight the two fitted segments
+            split = res["n_points_1"]
+            ax.scatter(t_s[:split], v_s[:split], color=C_TOTAL, s=55, zorder=6,
+                       marker="o", label="Line 1 (total)")
+            ax.scatter(t_s[split:], v_s[split:], color=C_EXT, s=55, zorder=6,
+                       marker="s", label="Line 2 (external)")
+
+            # Line 1: through the origin
+            t_line1 = np.linspace(0, res["t_bend_A"] or self.t.min(), 100)
+            ax.plot(t_line1, res["slope_1"] * t_line1, "-", color=C_TOTAL, lw=1.8,
+                    label=f"Total surface area  S={res['S_total_m2g']:.1f} m²/g")
+            t_line2 = np.linspace((res["t_bend_A"] or self.t.min()),
+                                  self.t.max() * 1.02, 200)
+        else:
+            t_line2 = np.linspace(t_lo, self.t.max() * 1.02, 200)
+
         # Line 2
-        t_line2 = np.linspace((res["t_bend_A"] or self.t.min()),
-                              self.t.max() * 1.02, 200)
         ax.plot(t_line2, res["slope_2"] * t_line2 + res["intercept_2"], "-",
                 color=C_EXT, lw=1.8,
                 label=f"External surface area  S={res['S_external_m2g']:.1f} m²/g")
 
-        # Bend point
-        if res["t_bend_A"] is not None and np.isfinite(res["t_bend_A"]):
+        # Bend point (only when line 1 was fitted)
+        if has_micropore and res["t_bend_A"] is not None and np.isfinite(res["t_bend_A"]):
             v_bend = res["slope_1"] * res["t_bend_A"]
             ax.plot(res["t_bend_A"], v_bend, "o", color="k", ms=7, zorder=7)
             ax.annotate(f"2t = {res['2t_nm']:.2f} nm",
@@ -621,33 +780,42 @@ class TPlotAnalyser:
         ax.set_xlim(0, self.t.max() * 1.05)
 
         # Annotation box
-        ann = (f"$S_{{total}}$ = {res['S_total_m2g']:.1f} m² g⁻¹\n"
-               f"$S_{{ext}}$ = {res['S_external_m2g']:.1f} m² g⁻¹\n"
-               f"$S_{{micro}}$ = {res['S_micro_m2g']:.1f} m² g⁻¹\n"
-               f"$V_{{micro}}$ = {res['V_micro_cm3g']:.4f} cm³ g⁻¹")
+        if has_micropore:
+            ann = (f"$S_{{total}}$ = {res['S_total_m2g']:.1f} m² g⁻¹\n"
+                   f"$S_{{ext}}$ = {res['S_external_m2g']:.1f} m² g⁻¹\n"
+                   f"$S_{{micro}}$ = {res['S_micro_m2g']:.1f} m² g⁻¹\n"
+                   f"$V_{{micro}}$ = {res['V_micro_cm3g']:.4f} cm³ g⁻¹")
+        else:
+            ann = (f"$S_{{ext}}$ = {res['S_external_m2g']:.1f} m² g⁻¹\n"
+                   "micropore analysis\nnot possible (undersampled)")
         ax.text(0.97, 0.05, ann, transform=ax.transAxes,
                 va="bottom", ha="right", fontsize=8.5,
                 bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.7", lw=0.7))
 
         # ── [B] Pore distribution bar ──────────────────────────
-        ax2   = axes[1]
-        labels = ["Micropore", "Meso + Macro"]
-        values = [res["Micropore_%"], res["Meso_Macro_%"]]
-        colors = [C_MICRO, C_EXT]
-        bars   = ax2.bar(labels, values, color=colors, width=0.5,
-                         edgecolor="white", linewidth=0.8)
-
-        for bar, val in zip(bars, values):
-            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.8,
-                     f"{val:.1f}%", ha="center", va="bottom", fontsize=10,
-                     fontweight="bold")
-
-        ax2.set_ylabel("Pore Volume Fraction (%)", fontsize=11)
-        ax2.set_title("Pore Type Distribution", fontsize=11, fontweight="bold")
-        ax2.set_ylim(0, max(values) * 1.18)
-        ax2.grid(axis="y", alpha=0.3)
-        ax2.text(0.5, -0.14, "V_macro needs Hg porosimetry (folded into Meso+Macro)",
-                 transform=ax2.transAxes, ha="center", fontsize=7.5, color="0.4")
+        ax2 = axes[1]
+        if has_micropore:
+            labels = ["Micropore", "Meso + Macro"]
+            values = [res["Micropore_%"], res["Meso_Macro_%"]]
+            colors = [C_MICRO, C_EXT]
+            bars = ax2.bar(labels, values, color=colors, width=0.5,
+                           edgecolor="white", linewidth=0.8)
+            for bar, val in zip(bars, values):
+                ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.8,
+                         f"{val:.1f}%", ha="center", va="bottom", fontsize=10,
+                         fontweight="bold")
+            ax2.set_ylabel("Pore Volume Fraction (%)", fontsize=11)
+            ax2.set_title("Pore Type Distribution", fontsize=11, fontweight="bold")
+            ax2.set_ylim(0, max(values) * 1.18)
+            ax2.grid(axis="y", alpha=0.3)
+            ax2.text(0.5, -0.14, "V_macro needs Hg porosimetry (folded into Meso+Macro)",
+                     transform=ax2.transAxes, ha="center", fontsize=7.5, color="0.4")
+        else:
+            ax2.text(0.5, 0.5, "Micropore volume undetermined\n(insufficient points "
+                     "below p/p0 = 0.08)", ha="center", va="center", fontsize=9,
+                     color="0.4")
+            ax2.set_xticks([])
+            ax2.set_yticks([])
 
         fig.suptitle(f"T-Plot Analysis — {sample_name}",
                      fontsize=13, fontweight="bold", y=1.02)
@@ -672,7 +840,7 @@ def main():
                         help="Sample name for plot title")
     parser.add_argument("--reference-curve", default="harkins-jura",
                         choices=sorted(REFERENCE_CURVES))
-    parser.add_argument("--t-min",  type=float, default=HJ_VALID_T_MIN)
+    parser.add_argument("--t-min",  type=float, default=LINE1_T_MIN)
     parser.add_argument("--t-max",  type=float, default=HJ_VALID_T_MAX)
     args = parser.parse_args()
 
