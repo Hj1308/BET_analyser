@@ -83,10 +83,15 @@ def harkins_jura_t(p_rel: np.ndarray) -> np.ndarray:
 
 # The Harkins-Jura film thickness is stated valid for 0.08 < p/p0 < 0.60
 # (see harkins_jura_t above). Auto-expansion of the t-plot fit window must not
-# cross that boundary: above it the thickness grows rapidly and the isotherm
-# enters the capillary-condensation region, where a linear t-plot is undefined.
-# 6.5 Å is the conservative ceiling used to clamp the expansion's t_max — it
-# corresponds to p/p0 ≈ 0.5, safely inside the valid range.
+# cross that boundary:
+#   - below p/p0 = 0.08, micropore filling is still in progress, which is
+#     exactly the regime a multilayer t-plot fit must avoid. p/p0 = 0.08
+#     corresponds to t = 3.52 Å; 3.5 Å is the rounded floor and coincides with
+#     the default window's lower edge.
+#   - above p/p0 = 0.60, the thickness grows rapidly and the isotherm enters
+#     the capillary-condensation region, where a linear t-plot is undefined.
+#     6.5 Å is the conservative ceiling (p/p0 ≈ 0.5, safely inside the range).
+HJ_VALID_T_MIN = 3.5
 HJ_VALID_T_MAX = 6.5
 
 
@@ -123,11 +128,12 @@ class TPlotAnalyser:
 
         Default range 3.5–5.0 Å is the standard IUPAC/BET linear region
         (p/p₀ ≈ 0.08–0.30). If fewer than 3 points fall in range, the
-        range is auto-expanded, but its upper end is clamped to
-        ``HJ_VALID_T_MAX`` so the fit never crosses the Harkins-Jura
-        validity ceiling (p/p₀ ≈ 0.60) into the capillary-condensation
-        region. If the bounded expansion still has fewer than 3 points a
-        ValueError is raised (a 2-point fit has R² = 1.0 by construction).
+        range is auto-expanded, but both ends are clamped to the Harkins-Jura
+        validity window ``[HJ_VALID_T_MIN, HJ_VALID_T_MAX]`` so the fit never
+        enters the micropore-filling region (below) or the capillary-
+        condensation region (above). If the bounded expansion still has fewer
+        than 3 points a ValueError is raised (a 2-point fit has R² = 1.0 by
+        construction).
 
         Conversion factors:
             S_ext (m²/g)    = slope × N2_TPLOT_SLOPE_FACTOR
@@ -159,7 +165,7 @@ class TPlotAnalyser:
         expanded = False
         if mask.sum() < 3:
             expanded = True
-            t_min = float(self.t.min()) + 0.2
+            t_min = max(float(self.t.min()) + 0.2, HJ_VALID_T_MIN)
             t_max = min(float(self.t.max()) - 0.2, HJ_VALID_T_MAX)
             mask  = (self.t >= t_min) & (self.t <= t_max)
 
