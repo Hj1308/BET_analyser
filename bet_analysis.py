@@ -18,6 +18,7 @@ License : MIT
 """
 
 import argparse
+import sys
 import warnings
 import numpy as np
 import pandas as pd
@@ -977,7 +978,7 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
         ["BJH Peak Diameter",    f"{s['rp_peak_BJH']*2:.2f}", "nm"],
     ]
     print(tabulate(rows, headers=["Parameter", "Value", "Unit"],
-                   tablefmt="rounded_outline"))
+                   tablefmt="simple"))
 
     if not bet_res["C_valid"]:
         print("\n  ⚠  WARNING: BET C constant is NEGATIVE.")
@@ -1045,7 +1046,21 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
 # 7. ENTRY POINT
 # ══════════════════════════════════════════════════════════════
 
+def _configure_console():
+    """Make stdout emit UTF-8 so the report never crashes a cp1252 console.
+
+    ``errors="replace"`` degrades an unrenderable glyph to ``?`` rather than
+    raising ``UnicodeEncodeError``. ``reconfigure`` is unavailable on very old
+    Pythons, so fall back to a no-op there (the caller is on Python >= 3.10).
+    """
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def main():
+    _configure_console()
     parser = argparse.ArgumentParser(
         description="BET/BJH Analysis Tool — publication-quality figures")
     parser.add_argument("--file",   required=True,

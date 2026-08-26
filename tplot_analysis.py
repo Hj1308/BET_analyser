@@ -88,6 +88,7 @@ License : MIT
 """
 
 import argparse
+import sys
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
@@ -860,7 +861,16 @@ class TPlotAnalyser:
 # STANDALONE ENTRY POINT
 # ══════════════════════════════════════════════════════════════
 
+def _configure_console():
+    """Emit UTF-8 so the report never crashes a cp1252 console (see bet_analysis)."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+
 def main():
+    _configure_console()
     parser = argparse.ArgumentParser(
         description="T-Plot Analysis (two-segment) from raw P/P0 + V data")
     parser.add_argument("--s-bet",  type=float, required=True,
