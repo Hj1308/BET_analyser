@@ -5,6 +5,9 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square&logo=python)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![IUPAC](https://img.shields.io/badge/IUPAC-2015%20compliant-orange?style=flat-square)
+[![Streamlit](https://img.shields.io/badge/demo-Streamlit-red?style=flat-square&logo=streamlit)](https://hj1308-bet-analyser-app-bet-tk3yef.streamlit.app/)
+
+**[▶ Try it in your browser](https://hj1308-bet-analyser-app-bet-tk3yef.streamlit.app/)** — no installation required. Upload an XLS/XLSX/CSV, or use `examples/reference_mesoporous.xlsx` from this repo.
 
 **Publication-Quality BET/BJH + T-Plot Analysis Tool**  
 Author: [Hoda Jafari](https://github.com/Hj1308) | MIT License
