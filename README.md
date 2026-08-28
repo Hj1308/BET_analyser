@@ -23,6 +23,20 @@ Developed and validated for **graphene-like carbon nitride (C₃N₄)**, MOFs, z
 
 ---
 
+![4-panel BET analysis output](assets/bet_analysis_example.png)
+
+*Output of `bet_analysis.py` on the bundled reference dataset — a synthetic
+Type IV isotherm whose true surface area is known by construction
+(S_BET = n_m × 4.353 = 177.00 m² g⁻¹; the tool recovers 177.01, R² = 0.999999).
+Reproduce it with:*
+
+```bash
+python examples/make_reference_data.py
+python bet_analysis.py --file examples/reference_mesoporous.xlsx --sample "reference"
+```
+
+---
+
 ## 🚀 Quick Start
 
 ```bash
@@ -165,6 +179,29 @@ Automatically scored using 6 physical features (area, slope ratio, closure point
 
 ## ✅ IUPAC 2015 Validity Checks
 
+### Refusing to report what the data cannot support
+
+A t-plot micropore analysis needs adsorption points below p/p₀ ≈ 0.015. When
+a measurement lacks them, this tool says so rather than printing a zero:
+
+| Before (v2.1.0) | After (v3.0.0) |
+|---|---|
+| `V_micro = 0.0 cm³/g` · `Micropore = 0.0 %` | `⚠ Micropore analysis not possible` + the reason below |
+
+A reported zero is indistinguishable from a genuine absence of micropores.
+The refusal is not. The full message names what is missing:
+
+```text
+Micropore analysis not possible: micropore volume and surface area cannot be
+determined from this measurement (only 1 point(s) below p/p0 = 0.08 (need at
+least 3); only 0 point(s) below p/p0 = 0.015 (need at least 1)). A t-plot
+micropore analysis needs at least one adsorption point below p/p0 ~ 0.015,
+ideally several lower still; check your instrument's low-pressure
+specification and measurement-range setting (Thommes et al. 2015 §6.1;
+Cychosz & Thommes 2018 §3). §6.1 also recommends argon at 87 K over nitrogen
+at 77 K where surface functional groups interact with the N2 quadrupole.
+```
+
 | Check | Behaviour |
 |-------|-----------|
 | **BET C constant** | `UserWarning` raised if C < 0 — invalid p/p₀ range; adjust `start_pt`/`end_pt` to 0.05 ≤ p/p₀ ≤ 0.35 |
@@ -246,6 +283,11 @@ BET_analyser/
 ├── tplot_analysis.py      # T-Plot analysis module
 ├── xls_reader.py          # Legacy .xls reader (xlrd API)
 ├── conftest.py            # pytest path configuration
+├── assets/
+│   └── bet_analysis_example.png        # example 4-panel figure
+├── examples/
+│   ├── make_reference_data.py          # regenerates the reference dataset
+│   └── reference_mesoporous.xlsx       # synthetic Type IV reference isotherm
 ├── tests/
 │   ├── synthetic_isotherms.py          # closed-form isotherm fixtures
 │   ├── test_isotherm_classification.py
@@ -263,6 +305,17 @@ BET_analyser/
 ├── requirements.txt       # runtime deps (single source)
 └── README.md
 ```
+
+## 📁 Bundled example data
+
+`examples/reference_mesoporous.xlsx` is a synthetic Type IV isotherm generated
+from the BET equation with a known monolayer capacity, so the correct surface
+area is known in advance rather than assumed. `examples/make_reference_data.py`
+regenerates it and prints the check.
+
+It contains no measured data. All four sheets (AdsDes, BET, BJH, Summary)
+derive from the same monolayer capacity and pore-size distribution, so the file
+is internally self-consistent: S_BET and S_BJH agree to within 1.2 %.
 
 ---
 
