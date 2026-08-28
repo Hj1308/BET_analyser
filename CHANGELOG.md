@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--no-show` disabled saving instead of display.
 - Hysteresis scoring double-counted `is_flat_low`; score ties were resolved by
   dict insertion order.
+- Documentation: the README "Physical Constants" table listed the STP→liquid
+  factor as `N2_LIQUID_FACTOR = 1547.0` — a name that never existed in the
+  code, and a value 2.393× too high. Renamed to `N2_STP_TO_LIQUID = 1.5468e-3`
+  to match `bet_analysis.py`; the Gurvich computation itself has been correct
+  since v3.0.0.
 
 ### Added
 

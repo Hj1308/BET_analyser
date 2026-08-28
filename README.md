@@ -199,7 +199,7 @@ All constants are defined as named variables at the top of `bet_analysis.py` (no
 |----------|-------|------------|
 | `N2_BET_FACTOR` | 4.353 m² g⁻¹ per cm³(STP) g⁻¹ | N₂ cross-section σ = 0.162 nm², Avogadro + molar volume |
 | `N2_TPLOT_SLOPE_FACTOR` | 15.47 m² g⁻¹ per cm³/(g·Å) | Harkins-Jura t-curve conversion |
-| `N2_LIQUID_FACTOR` | 1547.0 cm³(STP) per cm³(liquid N₂) | At 77 K |
+| `N2_STP_TO_LIQUID` | 1.5468e-3 cm³(liquid N₂) per cm³(STP) | Gurvich rule: V_liquid = V_STP × N2_STP_TO_LIQUID (77 K) |
 | `N2_CAVITATION_NM` | 3.4 nm | Forced closure diameter for N₂ at 77 K |
 
 ---
