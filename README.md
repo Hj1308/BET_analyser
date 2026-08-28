@@ -27,7 +27,7 @@ Developed and validated for **graphene-like carbon nitride (C₃N₄)**, MOFs, z
 
 *Output of `bet_analysis.py` on the bundled reference dataset — a synthetic
 Type IV isotherm whose true surface area is known by construction
-(S_BET = n_m × 4.353 = 177.00 m² g⁻¹; the tool recovers 177.01, R² = 0.999999).
+(S_BET = n_m × 4.353 = 177.28 m² g⁻¹; the tool recovers 177.28, R² = 0.999999).
 Reproduce it with:*
 
 ```bash
@@ -202,6 +202,10 @@ Cychosz & Thommes 2018 §3). §6.1 also recommends argon at 87 K over nitrogen
 at 77 K where surface functional groups interact with the N2 quadrupole.
 ```
 
+*This example message is from a measurement whose lowest adsorption point sits
+above p/p₀ = 0.015. The bundled reference dataset is purely mesoporous and does
+not trigger this gate.*
+
 | Check | Behaviour |
 |-------|-----------|
 | **BET C constant** | `UserWarning` raised if C < 0 — invalid p/p₀ range; adjust `start_pt`/`end_pt` to 0.05 ≤ p/p₀ ≤ 0.35 |
@@ -316,6 +320,9 @@ regenerates it and prints the check.
 It contains no measured data. All four sheets (AdsDes, BET, BJH, Summary)
 derive from the same monolayer capacity and pore-size distribution, so the file
 is internally self-consistent: S_BET and S_BJH agree to within 1.2 %.
+
+Every figure in this README was produced from this synthetic file. No measured
+instrument data is included in this repository.
 
 ---
 

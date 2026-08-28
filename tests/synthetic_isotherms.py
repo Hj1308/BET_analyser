@@ -88,6 +88,22 @@ def desorption(x, v_ads, shift, close_at):
     vd = np.maximum(vd, np.interp(xd, x, v_ads))
     return np.column_stack([xd, vd])
 
+
+def desorption_closed(x, v_ads, amplitude, close_at):
+    """H1 desorption branch that closes at close_at.
+
+    Separation is added in the *volume* domain (vd = v_ads + A·sin(pi·u))
+    rather than the *pressure* domain, so the two branches stay nearly
+    parallel: condensation and evaporation keep the same steepness, as
+    expected for a single pore-size distribution.  The bump vanishes at both
+    ends, so the loop is closed at the bottom and the top.
+    """
+    m = x >= close_at
+    xd = x[m]
+    u = (xd - close_at) / (1.0 - close_at)
+    vd = v_ads[m] + amplitude * np.sin(np.pi * u)
+    return np.column_stack([xd, vd])
+
 CASES = {
     "TypeIa_noHyst":  (type_Ia,  None),
     "TypeIb_noHyst":  (type_Ib,  None),

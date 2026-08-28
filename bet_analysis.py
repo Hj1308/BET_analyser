@@ -775,10 +775,19 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
         sort_d = np.argsort(des[:, 0])[::-1]
         ax.plot(des[sort_d, 0], des[sort_d, 1], "s--",
                 color=C_DES, ms=4, lw=1.4, label="Desorption")
-        pp0_d_s, Va_d_s = des[sort_d, 0], des[sort_d, 1]
-        pp0_all = np.concatenate([ads[:, 0], pp0_d_s[::-1]])
-        Va_all  = np.concatenate([ads[:, 1], Va_d_s[::-1]])
-        ax.fill(pp0_all, Va_all, alpha=0.10, color=C_ADS)
+        # Shade only the hysteresis loop: the p/p0 interval where both branches
+        # exist, bounded by the two interpolated branches (not a single polygon
+        # with straight closing edges, which produced a full-width wedge).
+        p_lo = max(ads[:, 0].min(), des[:, 0].min())
+        p_hi = min(ads[:, 0].max(), des[:, 0].max())
+        if p_hi > p_lo:
+            p_grid = np.linspace(p_lo, p_hi, 200)
+            s_a = np.argsort(ads[:, 0])
+            s_d = np.argsort(des[:, 0])
+            Va_a_g = np.interp(p_grid, ads[s_a, 0], ads[s_a, 1])
+            Va_d_g = np.interp(p_grid, des[s_d, 0], des[s_d, 1])
+            ax.fill_between(p_grid, Va_a_g, Va_d_g, alpha=0.10,
+                            color=C_ADS, linewidth=0)
 
     ax.set_xlabel(r"Relative Pressure ($p/p_0$)")
     ax.set_ylabel(r"Volume Adsorbed (cm$^3$ g$^{-1}$ STP)")
@@ -791,7 +800,7 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
     iso_label  = iso_cls["type"]
     hyst_label = hyst_cls["type"] if hyst_cls["type"] != "None" else ""
     ax_ann = iso_label + (f" / {hyst_label}" if hyst_label else "")
-    ax.text(0.03, 0.96, ax_ann, transform=ax.transAxes,
+    ax.text(0.03, 0.78, ax_ann, transform=ax.transAxes,
             va="top", ha="left", fontsize=8.5,
             bbox=dict(boxstyle="round,pad=0.3", fc="white",
                       ec="0.7", lw=0.7, alpha=0.9))
@@ -833,6 +842,16 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
     rp    = bjh[:, 0] * 2          # radius (nm) -> diameter (nm)
     dVdd  = bjh[:, 1] / 2.0        # dVp/drp -> dVp/ddp
 
+    # Upper x-limit from the data: the smallest diameter where the cumulative
+    # pore volume reaches 99 % of its final value (drops the mostly-empty
+    # high-diameter tail), with a floor so microporous samples aren't cramped.
+    x_max = float(rp[-1])
+    if bjh[-1, 2] > 0:
+        done = np.where(bjh[:, 2] >= 0.99 * bjh[-1, 2])[0]
+        if len(done):
+            x_max = float(rp[done[0]])
+    x_max = max(x_max, 5.0)
+
     ax.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
     ax.fill_between(rp, dVdd, alpha=0.15, color=C_BJH)
 
@@ -843,15 +862,15 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
 
     ax.set_xlabel(r"Pore Diameter (nm)")
     ax.set_ylabel(r"d$V_p$/d$d_p$  (cm$^3$ g$^{-1}$ nm$^{-1}$)")
-    ax.set_xlim(left=0)
+    ax.set_xlim(left=0, right=x_max)
     ax.set_ylim(bottom=0)
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
 
     ax.axvline(N2_CAVITATION_NM, ls=":", lw=0.8, color="0.6", alpha=0.7)
-    ax.text(N2_CAVITATION_NM + 0.2,
-            ax.get_ylim()[1] * 0.01 if ax.get_ylim()[1] > 0 else 0.001,
-            "cavitation\n(~3.4 nm)", fontsize=6.5, color="0.5", va="bottom")
+    ax.text(N2_CAVITATION_NM, ax.get_ylim()[1] * 0.9,
+            "cavitation\n(~3.4 nm)", fontsize=6.5, color="0.5",
+            va="top", ha="left")
     _label_panel(ax, "C")
 
     # ── [D] Cumulative Pore Volume ────────────────────────────
@@ -876,7 +895,7 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
     ax2.set_ylabel(r"Cum. Surface Area (m$^2$ g$^{-1}$)", color=C_BJH)
     ax.tick_params(axis="y", colors=C_CUM)
     ax2.tick_params(axis="y", colors=C_BJH)
-    ax.set_xlim(left=0)
+    ax.set_xlim(left=0, right=x_max)
     ax.set_ylim(bottom=0)
 
     lines1, lbl1 = ax.get_legend_handles_labels()

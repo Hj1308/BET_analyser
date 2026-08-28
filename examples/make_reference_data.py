@@ -72,7 +72,7 @@ sys.path.insert(0, os.path.join(REPO, "tests"))
 # Reuse the project's own constants and physics generators (no second BET
 # implementation, no duplicated physical constants).
 from bet_analysis import N2_BET_FACTOR, N2_STP_TO_LIQUID  # noqa: E402
-from synthetic_isotherms import bet, step, desorption     # noqa: E402
+from synthetic_isotherms import bet, step, desorption_closed  # noqa: E402
 
 _trapezoid = getattr(np, "trapezoid", None) or np.trapz
 
@@ -94,10 +94,12 @@ X_STEP = 0.60
 STEP_W = 0.08
 STEP_H = 200.0                   # cm³(STP) g⁻¹ added by capillary condensation
 
-# Desorption branch (H1 loop): adsorption pressure shifted down by SHIFT above
-# CLOSE_AT (mirrors the TypeIV_H1 fixture in synthetic_isotherms).
-SHIFT    = 0.15
-CLOSE_AT = 0.45
+# Desorption branch (H1 loop, closed at both ends): a volume-domain bump
+# vd = v_ads + AMPLITUDE·sin(pi·u) that vanishes at CLOSE_AT and p/p0 = 1
+# (desorption_closed). AMPLITUDE = 25 keeps the closure gap < 0.02, the branch
+# monotonic, slope_ratio_max <= 1.10, and a visible H1 loop (area_norm ~ 0.024).
+AMPLITUDE = 25.0
+CLOSE_AT  = 0.45
 
 # BJH mesopore peak (radius, nm) → 12 nm diameter peak.
 R_PEAK  = 6.0
@@ -120,7 +122,7 @@ def make_isotherm(n_m):
     x = _grid()
     va = bet(x, n_m, C, n=N_LAYERS) + step(x, X_STEP, STEP_W, STEP_H)
     ads = np.column_stack([x, va])
-    des = desorption(x, va, SHIFT, CLOSE_AT)
+    des = desorption_closed(x, va, AMPLITUDE, CLOSE_AT)
     return x, ads, des
 
 
@@ -132,7 +134,7 @@ def make_bjh(vp_total):
     trapezoidal integrals of ``dV`` over the same radius grid (cylindrical
     pore geometry: dS = 2 dV / r, with 1 cm³→1e-6 m³ and 1 nm→1e-9 m).
     """
-    rp = np.logspace(np.log10(1.0), np.log10(100.0), 60)
+    rp = np.logspace(np.log10(1.0), np.log10(25.0), 60)
     dV = np.exp(-0.5 * ((np.log(rp) - np.log(R_PEAK)) / R_SIGMA) ** 2)
     dV /= _trapezoid(dV, rp)
     dV *= vp_total
