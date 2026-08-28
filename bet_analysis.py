@@ -842,14 +842,28 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
     rp    = bjh[:, 0] * 2          # radius (nm) -> diameter (nm)
     dVdd  = bjh[:, 1] / 2.0        # dVp/drp -> dVp/ddp
 
-    # Upper x-limit from the data: the smallest diameter where the cumulative
-    # pore volume reaches 99 % of its final value (drops the mostly-empty
-    # high-diameter tail), with a floor so microporous samples aren't cramped.
-    x_max = float(rp[-1])
-    if bjh[-1, 2] > 0:
-        done = np.where(bjh[:, 2] >= 0.99 * bjh[-1, 2])[0]
-        if len(done):
-            x_max = float(rp[done[0]])
+    # Upper x-limit from the data, independent of the row order the instrument
+    # used (BELSORP writes large→small): sort a local copy by diameter, then find
+    # the smallest diameter where V_below(d) — the pore volume contained in pores
+    # of diameter <= d — reaches 99 % of the total.
+    order = np.argsort(rp)
+    rp_s  = rp[order]
+    cv_s  = bjh[order, 2]
+    total = float(cv_s.max())
+    # V_below rises with diameter. Ascending instruments store it directly; a
+    # descending (BELSORP) column stores the complement (volume in pores >= d),
+    # so flip it. The 99 % test below is identical in both directions.
+    if cv_s[-1] < cv_s[0]:             # accumulated from the large-diameter end
+        v_below = total - cv_s
+        decreasing = True
+    else:                              # accumulated from the small-diameter end
+        v_below = cv_s
+        decreasing = False
+    x_max = float(rp_s[-1])
+    if total > 0:
+        idx = np.where(v_below >= 0.99 * total)[0]
+        if len(idx):
+            x_max = float(rp_s[idx[0]])
     x_max = max(x_max, 5.0)
 
     ax.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
@@ -891,8 +905,11 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
                 label=f"$S_{{BJH}}$ = {s['S_BJH']:.1f} m² g⁻¹")
 
     ax.set_xlabel(r"Pore Diameter (nm)")
-    ax.set_ylabel(r"Cum. Pore Volume (cm$^3$ g$^{-1}$)", color=C_CUM)
-    ax2.set_ylabel(r"Cum. Surface Area (m$^2$ g$^{-1}$)", color=C_BJH)
+    vp_dir = " (from large d)" if decreasing else ""
+    ax.set_ylabel(r"Cum. Pore Volume" + vp_dir + r" (cm$^3$ g$^{-1}$)",
+                  color=C_CUM)
+    ax2.set_ylabel(r"Cum. Surface Area" + vp_dir + r" (m$^2$ g$^{-1}$)",
+                   color=C_BJH)
     ax.tick_params(axis="y", colors=C_CUM)
     ax2.tick_params(axis="y", colors=C_BJH)
     ax.set_xlim(left=0, right=x_max)
