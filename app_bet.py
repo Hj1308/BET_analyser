@@ -296,7 +296,10 @@ def _plot_rouquerol_transform(p_rel, n, best_window) -> plt.Figure:
 
     if best_window is not None:
         margin = 0.1 * (best_window.p_max - best_window.p_min)
-        ax_zoom.set_xlim(best_window.p_min - margin, best_window.p_max + margin)
+        # Relative pressure cannot be negative: keep the 10% margin but never
+        # let the lower bound drop below zero.
+        ax_zoom.set_xlim(max(best_window.p_min - margin, 0.0),
+                         best_window.p_max + margin)
         in_win = (p_rel >= best_window.p_min) & (p_rel <= best_window.p_max)
         if in_win.any():
             y_win = t[in_win]
@@ -747,7 +750,9 @@ with tab_bet:
         x_lo = float(bet_res["x"].min())
         x_hi = float(bet_res["x"].max())
         x_margin = 0.1 * (x_hi - x_lo)
-        ax.set_xlim(x_lo - x_margin, x_hi + x_margin)
+        # Relative pressure cannot be negative: keep the 10% margin but never
+        # let the lower bound drop below zero.
+        ax.set_xlim(max(x_lo - x_margin, 0.0), x_hi + x_margin)
         y_lo = float(bet_res["y"].min())
         y_hi = float(bet_res["y"].max())
         y_margin = 0.1 * (y_hi - y_lo)
