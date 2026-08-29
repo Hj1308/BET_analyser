@@ -6,8 +6,17 @@
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![IUPAC](https://img.shields.io/badge/IUPAC-2015%20compliant-orange?style=flat-square)
 [![Streamlit](https://img.shields.io/badge/demo-Streamlit-red?style=flat-square&logo=streamlit)](https://hj1308-bet-analyser-app-bet-tk3yef.streamlit.app/)
+[![tests](https://github.com/Hj1308/BET_analyser/actions/workflows/tests.yml/badge.svg)](https://github.com/Hj1308/BET_analyser/actions/workflows/tests.yml)
 
 **[▶ Try it in your browser](https://hj1308-bet-analyser-app-bet-tk3yef.streamlit.app/)** — no installation required. Upload an XLS/XLSX/CSV, or use `examples/reference_mesoporous.xlsx` from this repo.
+
+**Validated against published reference values.** On the BETSI round-robin
+isotherms (Osterrieth et al., *Adv. Mater.* **2022**, *34*, 2201502), the
+Rouquerol range selection reproduces the published BET areas for HKUST-1
+(1556 m² g⁻¹) and Zeolite-13X (833 m² g⁻¹) to within 1.1 %. The classical
+0.05–0.35 p/p₀ window gives negative C constants on both and underestimates
+them by 24–27 %. This comparison runs in CI on every commit
+(`tests/test_betsi_reference.py`).
 
 **Publication-Quality BET/BJH + T-Plot Analysis Tool**  
 Author: [Hoda Jafari](https://github.com/Hj1308) | MIT License
@@ -56,6 +65,18 @@ python tplot_analysis.py --s-bet 95.3 --vtot 0.38 --sample "C3N4"
 # Or launch the web app
 streamlit run app_bet.py
 ```
+
+A plain two-column CSV isotherm (`relative pressure, quantity adsorbed (cm3/g STP)`,
+with a header row) is also accepted directly:
+
+```bash
+python bet_analysis.py --file examples/betsi_HKUST-1.csv --sample "HKUST-1" --rouquerol
+```
+
+For a raw isotherm — no desorption branch, no BJH table, no instrument
+summary — BJH, hysteresis classification, and the instrument comparison are
+declined rather than estimated, and the tool names what is missing instead of
+reporting zero.
 
 ---
 
@@ -326,6 +347,22 @@ is internally self-consistent: S_BET and S_BJH agree to within 1.2 %.
 
 Every figure in this README was produced from this synthetic file. No measured
 instrument data is included in this repository.
+
+---
+
+## Known limitations
+
+- The t-plot uses the Harkins–Jura reference curve. Instrument software may
+  use a different reference t-curve, so t-plot quantities are not directly
+  comparable with instrument output.
+- BJH is based on the Kelvin equation and loses physical validity below about
+  2 nm pore radius. Micropore volumes should be taken from the t-plot, not
+  from BJH.
+- On microporous reference materials the t-plot total surface area runs above
+  the BET area; the cause is under investigation and the decomposition should
+  be read as indicative.
+- Raw two-column isotherms cannot support BJH, hysteresis classification, or
+  comparison with instrument values. These are declined rather than estimated.
 
 ---
 
