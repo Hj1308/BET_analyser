@@ -643,7 +643,14 @@ class TPlotAnalyser:
     pressure            : array-like — relative pressure (P/P0)
     volume_adsorbed     : array-like — volume adsorbed (cm³/g STP)
     s_bet               : float      — BET surface area (m²/g)
-    total_pore_volume   : float      — total pore volume at P/P0 ≈ 0.99 (cm³/g)
+    total_pore_volume   : float|None — total pore volume at P/P0 ≈ 0.99 (cm³/g);
+                                       None means "not determined", in which
+                                       case meso/macro and total volumes are
+                                       declined rather than estimated.
+    total_pore_volume_reason : str|None — reason carried by the reader when
+                                       ``total_pore_volume`` is None (e.g. the
+                                       isotherm does not reach p/p0 ≈ 0.99).
+                                       Reused verbatim in the declined output.
     reference_curve     : str        — "harkins-jura" (default) or "halsey";
                                        see REFERENCE_CURVES.
     c_constant          : float|None — BET C constant, used to warn when the
@@ -653,11 +660,13 @@ class TPlotAnalyser:
 
     def __init__(self, pressure, volume_adsorbed, s_bet: float,
                  total_pore_volume: float, reference_curve: str = "harkins-jura",
-                 c_constant: float = None):
+                 c_constant: float = None,
+                 total_pore_volume_reason: str = None):
         self.p    = np.array(pressure,        dtype=float)
         self.v    = np.array(volume_adsorbed, dtype=float)
         self.sbet = s_bet
         self.vtot = total_pore_volume
+        self.vtot_reason = total_pore_volume_reason
         self.c    = c_constant
         self.reference_curve = reference_curve
         if reference_curve not in REFERENCE_CURVES:
@@ -827,8 +836,7 @@ class TPlotAnalyser:
                 "Micropore_%": None,
                 "Meso_Macro_%": None,
                 "V_total_reason": (
-                    "total pore volume unavailable (isotherm does not reach "
-                    "p/p0 ≈ 0.99, so the Gurvich total could not be derived)"
+                    self.vtot_reason or "total pore volume not determined"
                 ),
             }
         v_meso = max(self.vtot - v_micro, 0.0)
@@ -1019,21 +1027,34 @@ class TPlotAnalyser:
         # ── [B] Pore distribution bar ──────────────────────────
         ax2 = axes[1]
         if has_micropore:
-            labels = ["Micropore", "Meso + Macro"]
-            values = [res["Micropore_%"], res["Meso_Macro_%"]]
-            colors = [C_MICRO, C_EXT]
-            bars = ax2.bar(labels, values, color=colors, width=0.5,
-                           edgecolor="white", linewidth=0.8)
-            for bar, val in zip(bars, values):
-                ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.8,
-                         f"{val:.1f}%", ha="center", va="bottom", fontsize=10,
-                         fontweight="bold")
-            ax2.set_ylabel("Pore Volume Fraction (%)", fontsize=11)
-            ax2.set_title("Pore Type Distribution", fontsize=11, fontweight="bold")
-            ax2.set_ylim(0, max(values) * 1.18)
-            ax2.grid(axis="y", alpha=0.3)
-            ax2.text(0.5, -0.14, "V_macro needs Hg porosimetry (folded into Meso+Macro)",
-                     transform=ax2.transAxes, ha="center", fontsize=7.5, color="0.4")
+            micro_pct = res.get("Micropore_%")
+            meso_pct = res.get("Meso_Macro_%")
+            if micro_pct is None or meso_pct is None:
+                # Total pore volume declined (e.g. the isotherm does not reach
+                # p/p0 ≈ 0.99), so the pore fractions cannot be computed. Show
+                # the reader's reason instead of a bar chart — never a zero and
+                # never a silent empty panel.
+                reason = res.get("V_total_reason") or "total pore volume not determined"
+                ax2.text(0.5, 0.5, f"pore distribution unavailable\n({reason})",
+                         ha="center", va="center", fontsize=9, color="0.4")
+                ax2.set_xticks([])
+                ax2.set_yticks([])
+            else:
+                labels = ["Micropore", "Meso + Macro"]
+                values = [micro_pct, meso_pct]
+                colors = [C_MICRO, C_EXT]
+                bars = ax2.bar(labels, values, color=colors, width=0.5,
+                               edgecolor="white", linewidth=0.8)
+                for bar, val in zip(bars, values):
+                    ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.8,
+                             f"{val:.1f}%", ha="center", va="bottom", fontsize=10,
+                             fontweight="bold")
+                ax2.set_ylabel("Pore Volume Fraction (%)", fontsize=11)
+                ax2.set_title("Pore Type Distribution", fontsize=11, fontweight="bold")
+                ax2.set_ylim(0, max(values) * 1.18)
+                ax2.grid(axis="y", alpha=0.3)
+                ax2.text(0.5, -0.14, "V_macro needs Hg porosimetry (folded into Meso+Macro)",
+                         transform=ax2.transAxes, ha="center", fontsize=7.5, color="0.4")
         else:
             ax2.text(0.5, 0.5, "Micropore volume undetermined\n(insufficient points "
                      "below p/p0 = 0.08)", ha="center", va="center", fontsize=9,

@@ -1101,6 +1101,7 @@ with tab_tplot:
                 s_bet             = s_bet_tplot,
                 total_pore_volume = s["Vp_total"],
                 c_constant        = s["C"],
+                total_pore_volume_reason = s.get("Vp_total_reason"),
             )
             res = tp.full_tplot_report(t_min=t_lo, t_max=t_hi)
 
