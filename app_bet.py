@@ -269,20 +269,44 @@ def _plot_isotherm(ads, des, iso_cls, hyst_cls) -> plt.Figure:
 
 
 def _plot_rouquerol_transform(p_rel, n, best_window) -> plt.Figure:
-    """Plot n(1−p/p0) vs p/p0 with the selected BET window highlighted."""
+    """Plot n(1−p/p0) vs p/p0: full range plus a zoom on the selected BET window.
+
+    The full-range panel keeps the Rouquerol-transform maximum (which sets the
+    upper BET bound); a second, zoomed panel is confined to the selected window
+    so the four consistency criteria can actually be inspected. A second panel
+    was chosen over an inset so the zoomed region is large enough to read and
+    the two views do not overlap.
+    """
     setup_plot_style()
-    fig, ax = plt.subplots(figsize=(5, 3.8))
+    fig, (ax, ax_zoom) = plt.subplots(1, 2, figsize=(10, 3.8))
     t = rouquerol_transform(p_rel, n)
-    ax.plot(p_rel, t, "o-", color=C_ADS, ms=4, lw=1.4, label="n(1−p/p₀)")
-    if best_window is not None:
-        ax.axvspan(best_window.p_min, best_window.p_max,
-                   alpha=0.18, color=C_BET, label="Selected BET range")
-        ax.axvline(best_window.p_min, ls="--", lw=0.9, color=C_BET)
-        ax.axvline(best_window.p_max, ls="--", lw=0.9, color=C_BET)
-    ax.set_xlabel(r"$p/p_0$")
-    ax.set_ylabel(r"$n(1-p/p_0)$  (cm³ g⁻¹)")
+
+    for a in (ax, ax_zoom):
+        a.plot(p_rel, t, "o-", color=C_ADS, ms=4, lw=1.4, label="n(1−p/p₀)")
+        if best_window is not None:
+            a.axvspan(best_window.p_min, best_window.p_max,
+                      alpha=0.18, color=C_BET, label="Selected BET range")
+            a.axvline(best_window.p_min, ls="--", lw=0.9, color=C_BET)
+            a.axvline(best_window.p_max, ls="--", lw=0.9, color=C_BET)
+        a.set_xlabel(r"$p/p_0$")
+        a.set_ylabel(r"$n(1-p/p_0)$  (cm³ g⁻¹)")
+
     ax.legend(fontsize=8)
-    ax.set_title("Rouquerol Transform", fontsize=10)
+    ax.set_title("Rouquerol Transform (full range)", fontsize=10)
+
+    if best_window is not None:
+        margin = 0.1 * (best_window.p_max - best_window.p_min)
+        ax_zoom.set_xlim(best_window.p_min - margin, best_window.p_max + margin)
+        in_win = (p_rel >= best_window.p_min) & (p_rel <= best_window.p_max)
+        if in_win.any():
+            y_win = t[in_win]
+            y_margin = 0.1 * (y_win.max() - y_win.min())
+            ax_zoom.set_ylim(y_win.min() - y_margin, y_win.max() + y_margin)
+        ax_zoom.legend(fontsize=8)
+        ax_zoom.set_title("Selected BET range (zoomed)", fontsize=10)
+    else:
+        ax_zoom.set_title("Selected BET range", fontsize=10)
+
     plt.tight_layout()
     return fig
 
@@ -417,7 +441,8 @@ with st.sidebar:
     )
 
     st.divider()
-    sample_name = st.text_input("Sample name", value="Sample")
+    default_sample = Path(uploaded.name).stem if uploaded is not None else "Sample"
+    sample_name = st.text_input("Sample name", value=default_sample)
 
     st.divider()
     st.subheader("⚙️ Options")
@@ -714,6 +739,19 @@ with tab_bet:
         x_fit = np.linspace(bet_res["x"].min(), bet_res["x"].max(), 200)
         ax.plot(x_fit, bet_res["slope"] * x_fit + bet_res["intercept"],
                 "-", color=C_BET, lw=1.6)
+        # Limit the axes to the fitted window (plus a 10% margin) so the
+        # regression is inspectable on microporous isotherms, where the unused
+        # points at high p/p0 would otherwise compress the fitted region to a
+        # flat strip. The margin is derived from the fitted points, not a fixed
+        # constant.
+        x_lo = float(bet_res["x"].min())
+        x_hi = float(bet_res["x"].max())
+        x_margin = 0.1 * (x_hi - x_lo)
+        ax.set_xlim(x_lo - x_margin, x_hi + x_margin)
+        y_lo = float(bet_res["y"].min())
+        y_hi = float(bet_res["y"].max())
+        y_margin = 0.1 * (y_hi - y_lo)
+        ax.set_ylim(y_lo - y_margin, y_hi + y_margin)
         ax.set_xlabel(r"$p/p_0$")
         ax.set_ylabel(r"$1/[V_a(p_0/p-1)]$ (g cm$^{-3}$)")
         ax.legend(fontsize=8)
