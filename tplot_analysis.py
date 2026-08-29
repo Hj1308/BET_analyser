@@ -172,14 +172,16 @@ REFERENCE_CURVES = {
 
 
 # The Harkins-Jura film thickness is stated valid for 0.08 < p/p0 < 0.60
-# (see harkins_jura_t above). The t-plot fit window must not cross that
-# boundary:
+# (see harkins_jura_t above). That range is a property of the *reference
+# t-curve*, not of the sample, so it is enforced separately from the fit:
 #   - below p/p0 = 0.08, micropore filling is still in progress, which is
 #     exactly the regime line 1 (total surface area) models. p/p0 = 0.08
 #     corresponds to t = 3.52 Å; 3.5 Å is the rounded floor.
-#   - above p/p0 = 0.60, the thickness grows rapidly and the isotherm enters
-#     the capillary-condensation region, where a linear t-plot is undefined.
+#   - above p/p0 = 0.60, the t-curve is no longer a reliable film thickness.
 #     6.5 Å is the conservative ceiling (p/p0 ≈ 0.5, safely inside the range).
+# HJ_VALID_T_MAX therefore guards t-curve *validity*, not fit quality. The fit
+# may additionally be capped LOWER, at the sample's capillary-condensation
+# onset, which is read from the data by condensation_onset_t() — see fit_tplot.
 HJ_VALID_T_MIN = 3.5
 HJ_VALID_T_MAX = 6.5
 
@@ -188,6 +190,15 @@ MIN_SEGMENT_POINTS = 3
 
 # B-AD-009: the mean pore diameter 2t is unreliable below 0.7 nm.
 BEND_2T_MIN_NM = 0.7
+
+# ── Capillary-condensation onset (data-derived fit ceiling) ─────
+# The t-plot is only linear up to the onset of capillary condensation; past it
+# the isotherm rises steeply and a linear t-plot is undefined. That onset is a
+# property of the *sample* (its pore size), so it is detected from the data
+# rather than hardcoded. It is looked for only in the mesopore pressure range.
+_CONDENSATION_LOOK_P_MIN = 0.40
+_CONDENSATION_LOOK_P_MAX = 0.95
+_CONDENSATION_CURVATURE_FRACTION = 0.25
 
 # ── Line-1 (micropore) bounds and sufficiency gate ──────────────
 # Line 1 models micropore filling, which occurs below p/p0 ~ 0.08 and mostly
@@ -220,6 +231,50 @@ def line1_t_min(reference_curve: str) -> float:
     return float(REFERENCE_CURVES[reference_curve](np.asarray([LINE1_P_MIN]))[0])
 
 
+def condensation_onset_t(p, v, t) -> float:
+    """Data-derived upper fit bound (Å), just below the capillary-condensation rise.
+
+    ``HJ_VALID_T_MAX`` guards the Harkins-Jura *t-curve* validity
+    (0.08 < p/p0 < 0.60), not the fit. Separately, the t-plot is only linear up
+    to the onset of capillary condensation, which is a property of the *sample*
+    (its pore size). That onset is detected here from the data rather than
+    hardcoded: the condensation step is the dominant positive curvature of the
+    isotherm in the mesopore range, so the onset is the first point, scanning up
+    in p/p0, where ``d²V/d(log p/p0)²`` reaches
+    ``_CONDENSATION_CURVATURE_FRACTION`` of its peak in that range.
+
+    Returns the t of the last clean point before the rise, or ``HJ_VALID_T_MAX``
+    when no condensation rise is present in the mesopore range.
+    """
+    p = np.asarray(p, dtype=float)
+    v = np.asarray(v, dtype=float)
+    t = np.asarray(t, dtype=float)
+    order = np.argsort(p)
+    pp = p[order]
+    vv = v[order]
+    tt = t[order]
+
+    x = np.log(np.clip(pp, 1e-12, None))
+    curv = np.gradient(np.gradient(vv, x), x)
+
+    look = (pp > _CONDENSATION_LOOK_P_MIN) & (pp <= _CONDENSATION_LOOK_P_MAX)
+    if int(look.sum()) < 3:
+        return float(HJ_VALID_T_MAX)
+    peak = float(np.max(curv[look]))
+    if not np.isfinite(peak) or peak <= 0.0:
+        return float(HJ_VALID_T_MAX)
+
+    thresh = _CONDENSATION_CURVATURE_FRACTION * peak
+    rising = look & (curv >= thresh)
+    idx = np.where(rising)[0]
+    if len(idx) == 0:
+        return float(HJ_VALID_T_MAX)
+    i0 = int(idx[0])
+    if i0 <= 0:
+        return float(HJ_VALID_T_MAX)
+    return float(min(tt[i0 - 1], HJ_VALID_T_MAX))
+
+
 # ══════════════════════════════════════════════════════════════
 # TWO-SEGMENT FIT (module-level, pure)
 # ══════════════════════════════════════════════════════════════
@@ -234,27 +289,22 @@ def fit_two_segment(t, v, t_min: float, t_max: float,
     micropore volume (intercept x Gurvich factor).
 
     Bend-point detection scans every split that leaves at least
-    ``MIN_SEGMENT_POINTS`` in each segment; for each, line 1 is fit through the
-    origin (``slope = sum(t*v)/sum(t**2)``) and line 2 by ordinary least
-    squares. The split is chosen to minimise the total sum of squared residuals
-    (SSE) of the two lines — the maximum-likelihood choice. The physical
-    constraints below are then checked on that best-fit split and reported as
-    warnings/flags, *not* used to select the split: in particular ``2t >= 0.7 nm``
-    is a reliability statement about the result, and using it (or any constraint
-    count) to relocate the bend would hide a genuinely small mean pore diameter
-    — exactly the silent tuning this review exists to prevent.
+    ``MIN_SEGMENT_POINTS`` in each segment and keeps line 2 at/above
+    ``split_t_min``; for each, line 1 is fit through the origin
+    (``slope = sum(t*v)/sum(t**2)``) and line 2 by ordinary least squares.
 
-    Line 1 may use points down to ``t_min`` (which the caller may set below the
-    Harkins-Jura floor via ``LINE1_T_MIN``, so the micropore region is included);
-    line 2 is confined to ``[split_t_min, t_max]`` — the split point is kept at
-    or above ``split_t_min`` (normally ``HJ_VALID_T_MIN``).
-
-    Physical constraints each raise a ``UserWarning`` and set a flag in the
-    returned dict (never a silent clamp):
-      * ``slope_1 > slope_2``        (micropore filling is the steeper region)
-      * ``intercept_2 >= 0``
-      * ``S_external <= S_total``
-      * ``2t >= 0.7 nm``             (mean pore diameter reliable)
+    The three physical-validity constraints of a t-plot decomposition
+        * ``slope_1 > slope_2``    (micropore filling is the steeper region)
+        * ``intercept_2 >= 0``
+        * ``S_external <= S_total``
+    are enforced *during* the scan: a split violating any of them is excluded,
+    so a physically impossible decomposition (in particular ``S_external >
+    S_total``) is never returned. ``2t >= 0.7 nm`` is a *reliability* statement
+    (B-AD-009), not a validity gate, so it is flagged rather than used to reject
+    a genuine bend. Among the valid splits the one with the lowest total SSE is
+    selected. If no split satisfies the three validity constraints, the window
+    admits no two-segment decomposition and ``None`` is returned (the caller
+    should fall back to a single origin line — see :func:`fit_tplot_model`).
 
     Parameters
     ----------
@@ -267,9 +317,10 @@ def fit_two_segment(t, v, t_min: float, t_max: float,
 
     Returns
     -------
-    dict with the derived quantities, per-segment counts, constraint flags and
-    any emitted warnings. Raises ValueError if no split leaves
-    ``MIN_SEGMENT_POINTS`` points in each segment.
+    dict with the derived quantities, per-segment counts and constraint flags,
+    or ``None`` if no physically valid two-segment decomposition exists in the
+    window. Raises ValueError if the window holds fewer than
+    ``2 * MIN_SEGMENT_POINTS`` points.
     """
     t = np.asarray(t, dtype=float)
     v = np.asarray(v, dtype=float)
@@ -314,19 +365,27 @@ def fit_two_segment(t, v, t_min: float, t_max: float,
         v_micro_raw = intercept2 * N2_STP_TO_LIQUID
 
         denom = slope1 - slope2
-        if abs(denom) > 1e-12:
+        if denom > 1e-12:
             t_bend = intercept2 / denom
+            two_t_nm = 2.0 * t_bend / 10.0
         else:
             t_bend = np.nan
-        two_t_nm = 2.0 * t_bend / 10.0 if np.isfinite(t_bend) else np.nan
+            two_t_nm = np.nan
 
         ok_slope = slope1 > slope2
         ok_intercept = intercept2 >= 0
         ok_s = S_external <= S_total
-        ok_bend = bool(np.isfinite(two_t_nm) and two_t_nm >= BEND_2T_MIN_NM)
+        bend_defined = bool(denom > 1e-12)
+        ok_bend = bool(bend_defined and two_t_nm >= BEND_2T_MIN_NM)
 
-        n_violations = (int(not ok_slope) + int(not ok_intercept)
-                        + int(not ok_s) + int(not ok_bend))
+        # FIX B — the physically *impossible* constraints gate the fit: a split
+        # with slope1 <= slope2, a negative intercept, S_external > S_total, or
+        # parallel segments (no finite bend) is not a valid decomposition and is
+        # excluded outright (never reported). 2t >= 0.7 nm is a *reliability*
+        # statement (B-AD-009), not a validity gate, so it is carried through as
+        # a flag rather than used to reject a genuine bend.
+        if not (ok_slope and ok_intercept and ok_s and bend_defined):
+            continue
 
         cand = {
             "split": split,
@@ -337,19 +396,17 @@ def fit_two_segment(t, v, t_min: float, t_max: float,
             "S_total": S_total, "S_external": S_external,
             "v_micro_raw": v_micro_raw,
             "t_bend": t_bend, "two_t_nm": two_t_nm,
-            "ok_slope": ok_slope, "ok_intercept": ok_intercept,
-            "ok_s": ok_s, "ok_bend": ok_bend,
-            "n_violations": n_violations,
+            "ok_bend": ok_bend,
         }
         if best is None or cand["sse"] < best["sse"]:
             best = cand
 
     if best is None:
-        raise ValueError(
-            f"two-segment fit needs at least {MIN_SEGMENT_POINTS} points below "
-            f"and at/above the split floor ({split_t_min:.2f} Å); no valid "
-            f"split exists in window ({t_min:.2f}-{t_max:.2f} Å)."
-        )
+        # No split satisfies the physical-validity constraints — the window
+        # admits no two-segment decomposition (e.g. a straight line through the
+        # origin or a convex t-plot). The caller should fall back to a single
+        # line.
+        return None
 
     slope1 = best["slope1"]
     slope2 = best["slope2"]
@@ -364,38 +421,13 @@ def fit_two_segment(t, v, t_min: float, t_max: float,
     v_micro_raw = best["v_micro_raw"]
     v_micro = max(v_micro_raw, 0.0)
 
-    ok_slope = best["ok_slope"]
-    ok_intercept = best["ok_intercept"]
-    ok_s = best["ok_s"]
+    # The three physical-validity constraints were enforced during the scan;
+    # ok_bend (2t >= 0.7 nm) is a *reliability* statement, not a validity gate,
+    # so it is reported below rather than used to reject the decomposition.
+    ok_slope = ok_intercept = ok_s = True
     ok_bend = best["ok_bend"]
 
     warnings_fired = []
-    if not ok_slope:
-        warnings_fired.append("slope_1 <= slope_2")
-        warnings.warn(
-            "t-plot line 1 (total surface area) is not steeper than line 2 "
-            "(external); micropore filling should be the steeper region. The "
-            "sample may be non-porous or the reference t-curve may not match "
-            "its surface chemistry.",
-            UserWarning, stacklevel=2,
-        )
-    if not ok_intercept:
-        warnings_fired.append("intercept_2 < 0")
-        warnings.warn(
-            f"t-plot line 2 intercept is negative ({intercept2:.4f} cm³/g STP); "
-            "V_micro was clamped to 0. A negative intercept usually means the "
-            "reference t-curve does not match the sample's surface chemistry, "
-            "or the split lies inside the micropore-filling region.",
-            UserWarning, stacklevel=2,
-        )
-    if not ok_s:
-        warnings_fired.append("S_external > S_total")
-        warnings.warn(
-            f"t-plot external surface area ({S_external:.2f} m²/g) exceeds the "
-            f"total ({S_total:.2f} m²/g); S_micro was clamped to 0. The "
-            "reference t-curve likely does not match the sample's surface.",
-            UserWarning, stacklevel=2,
-        )
     if not ok_bend:
         warnings_fired.append("2t < 0.7 nm")
         two_t_str = "undefined" if not np.isfinite(best["two_t_nm"]) else \
@@ -406,25 +438,17 @@ def fit_two_segment(t, v, t_min: float, t_max: float,
             UserWarning, stacklevel=2,
         )
 
-    # Low-confidence reasons: minimum-size segment, violated constraints, or a
-    # bend point that is not meaningful (line 1 no steeper than line 2).
+    # Low-confidence reasons: minimum-size segment, or an unreliable mean pore
+    # diameter (the validity constraints are guaranteed by the scan).
     low_confidence_reasons = []
     if split < 4:
         low_confidence_reasons.append("fewer than 4 points in line-1 segment")
     if (n - split) < 4:
         low_confidence_reasons.append("fewer than 4 points in line-2 segment")
-    if not ok_slope:
-        low_confidence_reasons.append("no steeper micropore-filling segment")
-    if not ok_intercept:
-        low_confidence_reasons.append("negative line-2 intercept")
-    if not ok_s:
-        low_confidence_reasons.append("external area exceeds total")
     if not ok_bend:
         low_confidence_reasons.append("mean pore diameter unreliable")
     low_confidence = bool(low_confidence_reasons)
     low_confidence_reason = "; ".join(low_confidence_reasons)
-
-    clamped = (v_micro_raw < 0.0) or (s_micro_raw < 0.0)
 
     return {
         "slope_1"        : round(slope1, 6),
@@ -444,6 +468,7 @@ def fit_two_segment(t, v, t_min: float, t_max: float,
         "n_points_2"     : n - split,
         "n_points"       : n,
         "split_index"    : split,
+        "sse"            : best["sse"],
         "t_range"        : (round(float(t_min), 2), round(float(t_max), 2)),
         "flags"          : {
             "slope_order_ok": ok_slope,
@@ -452,9 +477,122 @@ def fit_two_segment(t, v, t_min: float, t_max: float,
             "bend_ok"       : ok_bend,
         },
         "warnings"       : warnings_fired,
-        "clamped"        : clamped,
+        "clamped"        : False,
         "low_confidence" : low_confidence,
         "low_confidence_reason": low_confidence_reason,
+    }
+
+
+def _aicc(n: int, sse: float, k: int) -> float:
+    """Small-sample-corrected Akaike information criterion.
+
+    ``AICc = n·ln(SSE/n) + 2k + 2k(k+1)/(n−k−1)``; lower is better. A perfect
+    fit (SSE = 0) returns ``-inf``; an undefined value (too few points, or
+    non-finite/negative SSE) returns ``+inf``.
+    """
+    if n - k - 1 <= 0:
+        return float("inf")
+    if not np.isfinite(sse) or sse < 0:
+        return float("inf")
+    if sse == 0.0:
+        return float("-inf")
+    return float(
+        n * np.log(sse / n)
+        + 2.0 * k
+        + 2.0 * k * (k + 1.0) / (n - k - 1.0)
+    )
+
+
+def fit_tplot_model(t, v, t_min: float, t_max: float,
+                    split_t_min: float = HJ_VALID_T_MIN) -> dict:
+    """Choose the best t-plot model: a single origin line vs a two-segment bend.
+
+    FIX A — a bend is only reported when it is statistically justified. A single
+    origin-constrained line (1 parameter) is always fitted first; the best
+    *physically valid* two-segment fit (3 parameters: slope1, slope2, intercept2)
+    is then compared with the small-sample-corrected AICc. Raw SSE is not used,
+    because two segments always fit at least as well as one. AICc is chosen over
+    an F-test because it penalises the extra parameters without an arbitrary
+    p-value threshold, and its small-sample correction suits the short windows
+    the t-plot uses.
+
+    If the single line wins (or no valid two-segment fit exists), the result
+    reports ``S_total == S_ext == slope*15.47``, ``S_micro = 0``,
+    ``V_micro = 0`` and ``2t`` not applicable, with ``bend_detected`` False.
+
+    Returns
+    -------
+    dict with ``model`` ("single_line" or "two_segment"), ``bend_detected`` and
+    the full public result keys consumed by :meth:`TPlotAnalyser.fit_tplot`.
+    """
+    t = np.asarray(t, dtype=float)
+    v = np.asarray(v, dtype=float)
+    mask = (t >= t_min) & (t <= t_max)
+    t = t[mask]
+    v = v[mask]
+    order = np.argsort(t)
+    t = t[order]
+    v = v[order]
+    n = len(t)
+
+    if n < 2 * MIN_SEGMENT_POINTS:
+        raise ValueError(
+            f"t-plot fit needs at least {2 * MIN_SEGMENT_POINTS} points in "
+            f"window ({t_min:.2f}-{t_max:.2f} Å) but only {n} are available."
+        )
+
+    # Single line through the origin.
+    slope0 = float(np.dot(t, v) / np.dot(t, t))
+    sse0 = float(np.sum((slope0 * t - v) ** 2))
+    r2_0 = 1.0 - sse0 / max(float(np.dot(v, v)), 1e-30)
+    aicc0 = _aicc(n, sse0, 1)
+
+    two = fit_two_segment(t, v, t_min, t_max, split_t_min)
+    aicc_two = _aicc(n, two["sse"], 3) if two is not None else float("inf")
+
+    if two is not None and aicc_two < aicc0:
+        result = dict(two)
+        result["model"] = "two_segment"
+        result["bend_detected"] = True
+        result["no_bend_reason"] = ""
+        result["aicc"] = round(aicc_two, 3)
+        result["aicc_single_line"] = round(aicc0, 3)
+        result["single_slope"] = round(slope0, 6)
+        return result
+
+    S = slope0 * N2_TPLOT_SLOPE_FACTOR
+    return {
+        "model": "single_line",
+        "bend_detected": False,
+        "no_bend_reason": ("no micropore bend detected — a single straight line "
+                           "through the origin fits best"),
+        "aicc": round(aicc0, 3),
+        "aicc_two_segment": None if two is None else round(aicc_two, 3),
+        "single_slope": round(slope0, 6),
+        "slope_1": round(slope0, 6),
+        "slope_2": round(slope0, 6),
+        "intercept_2": 0.0,
+        "S_total_m2g": round(S, 2),
+        "S_external_m2g": round(S, 2),
+        "s_micro_raw": 0.0,
+        "S_micro_m2g": 0.0,
+        "V_micro_raw_cm3g": 0.0,
+        "V_micro_cm3g": 0.0,
+        "t_bend_A": None,
+        "2t_nm": None,
+        "R2_1": round(r2_0, 5),
+        "R2_2": None,
+        "n_points_1": n,
+        "n_points_2": 0,
+        "n_points": n,
+        "split_index": None,
+        "sse": sse0,
+        "t_range": (round(float(t_min), 2), round(float(t_max), 2)),
+        "flags": {},
+        "warnings": [],
+        "clamped": False,
+        "low_confidence": False,
+        "low_confidence_reason": "",
     }
 
 
@@ -547,13 +685,16 @@ class TPlotAnalyser:
     def fit_tplot(self, t_min: float = LINE1_T_MIN,
                   t_max: float = HJ_VALID_T_MAX) -> dict:
         """
-        Fit the two-segment t-plot (Lippens & de Boer construction).
+        Fit the t-plot, choosing between a single origin line and a two-segment
+        bend (Lippens & de Boer construction).
 
         Line 1 (origin) -> total surface area; line 2 (free intercept) ->
         external surface area (slope) and micropore volume (intercept). Line 1
         is allowed down to the per-curve ``line1_t_min`` so it can reach the
         micropore-filling region; line 2 is confined to
-        ``[HJ_VALID_T_MIN, HJ_VALID_T_MAX]``.
+        ``[HJ_VALID_T_MIN, HJ_VALID_T_MAX]``, and the whole window is
+        additionally capped at the data-derived capillary-condensation onset
+        (:func:`condensation_onset_t`).
 
         A two-layer data-sufficiency gate runs first: micropore analysis is
         possible only when the adsorption data has at least ``MIN_LINE1_POINTS``
@@ -564,13 +705,20 @@ class TPlotAnalyser:
         ``None`` with ``micropore_analysis_possible`` False; only the external
         surface area (line 2) is reported in that case.
 
-        Returns the dict from :func:`fit_two_segment` (or a line-2-only dict)
-        plus ``reference_curve``, ``S_BET_m2g``, the sufficiency-gate keys and
-        the ``S_ext_m2g`` / ``R2_tplot`` / ``intercept`` / ``slope``
-        compatibility keys.
+        When the gate passes, :func:`fit_tplot_model` decides between a single
+        line (no bend) and a two-segment bend using AICc; a physically invalid
+        two-segment fit is never returned.
+
+        Returns the model dict plus ``reference_curve``, ``S_BET_m2g``, the
+        sufficiency-gate keys and the ``S_ext_m2g`` / ``R2_tplot`` /
+        ``intercept`` / ``slope`` compatibility keys.
         """
         t_min = max(float(t_min), line1_t_min(self.reference_curve))
         t_max = min(float(t_max), HJ_VALID_T_MAX)
+        # FIX C — cap the fit window at the data-derived capillary-condensation
+        # onset (a sample property), separately from the Harkins-Jura validity
+        # ceiling applied above.
+        t_max = min(t_max, condensation_onset_t(self.p, self.v, self.t))
 
         n_below = int((self.p < LINE1_P_MAX).sum())
         n_primary = int((self.p < LINE1_P_PRIMARY).sum())
@@ -579,12 +727,15 @@ class TPlotAnalyser:
         gate_passed = enough_below and enough_primary
 
         if gate_passed:
-            fit = fit_two_segment(self.t, self.v, t_min, t_max,
+            fit = fit_tplot_model(self.t, self.v, t_min, t_max,
                                   split_t_min=HJ_VALID_T_MIN)
             result = dict(fit)
         else:
             line2 = fit_line2_only(self.t, self.v, HJ_VALID_T_MIN, t_max)
             result = {
+                "model": "line2_only",
+                "bend_detected": False,
+                "no_bend_reason": "",
                 "slope_1": None,
                 "slope_2": line2["slope_2"],
                 "intercept_2": line2["intercept_2"],
@@ -704,6 +855,10 @@ class TPlotAnalyser:
         print(f"  T-Plot Report ({res['reference_curve']}) — {sample_name}")
         print(sep)
         if res["micropore_analysis_possible"]:
+            if res.get("model") == "single_line":
+                print(f"  Model          : single line through the origin — no micropore bend")
+            else:
+                print(f"  Model          : two-segment (micropore bend detected)")
             print(f"  Fit window     : {res['t_range'][0]}–{res['t_range'][1]} Å  "
                   f"({res['n_points_1']} + {res['n_points_2']} pts)")
             print(f"  R² (line 1/2)  : {res['R2_1']} / {res['R2_2']}")
@@ -736,6 +891,8 @@ class TPlotAnalyser:
             print(f"  Bend point")
             print(f"    t_bend       : {res['t_bend_A']:.3f} Å")
             print(f"    2t (diameter): {res['2t_nm']:.3f} nm")
+        elif res.get("model") == "single_line" and res["micropore_analysis_possible"]:
+            print(f"  Bend point     : none (no micropore bend detected)")
         else:
             print(f"  Bend point     : none (not fitted)")
         if res["warnings"]:
@@ -772,7 +929,16 @@ class TPlotAnalyser:
         order = np.argsort(self.t)
         t_s, v_s = self.t[order], self.v[order]
 
-        if has_micropore:
+        single_line = has_micropore and res.get("model") == "single_line"
+
+        if single_line:
+            # One straight line through the origin — no bend to mark.
+            ax.scatter(t_s, v_s, color=C_TOTAL, s=55, zorder=6, marker="o",
+                       label="Line 1 (total)")
+            t_line = np.linspace(0, self.t.max() * 1.02, 200)
+            ax.plot(t_line, res["slope_1"] * t_line, "-", color=C_TOTAL, lw=1.8,
+                    label=f"Surface area  S={res['S_total_m2g']:.1f} m²/g")
+        elif has_micropore:
             # Highlight the two fitted segments
             split = res["n_points_1"]
             ax.scatter(t_s[:split], v_s[:split], color=C_TOTAL, s=55, zorder=6,
@@ -784,15 +950,17 @@ class TPlotAnalyser:
             t_line1 = np.linspace(0, res["t_bend_A"] or self.t.min(), 100)
             ax.plot(t_line1, res["slope_1"] * t_line1, "-", color=C_TOTAL, lw=1.8,
                     label=f"Total surface area  S={res['S_total_m2g']:.1f} m²/g")
+            # Line 2
             t_line2 = np.linspace((res["t_bend_A"] or self.t.min()),
                                   self.t.max() * 1.02, 200)
+            ax.plot(t_line2, res["slope_2"] * t_line2 + res["intercept_2"], "-",
+                    color=C_EXT, lw=1.8,
+                    label=f"External surface area  S={res['S_external_m2g']:.1f} m²/g")
         else:
             t_line2 = np.linspace(t_lo, self.t.max() * 1.02, 200)
-
-        # Line 2
-        ax.plot(t_line2, res["slope_2"] * t_line2 + res["intercept_2"], "-",
-                color=C_EXT, lw=1.8,
-                label=f"External surface area  S={res['S_external_m2g']:.1f} m²/g")
+            ax.plot(t_line2, res["slope_2"] * t_line2 + res["intercept_2"], "-",
+                    color=C_EXT, lw=1.8,
+                    label=f"External surface area  S={res['S_external_m2g']:.1f} m²/g")
 
         # Bend point (only when line 1 was fitted)
         if has_micropore and res["t_bend_A"] is not None and np.isfinite(res["t_bend_A"]):
@@ -812,7 +980,10 @@ class TPlotAnalyser:
         ax.set_xlim(0, self.t.max() * 1.05)
 
         # Annotation box
-        if has_micropore:
+        if single_line:
+            ann = (f"$S$ = {res['S_total_m2g']:.1f} m² g⁻¹\n"
+                   "no micropore bend\n($S_{{micro}}$ = 0)")
+        elif has_micropore:
             ann = (f"$S_{{total}}$ = {res['S_total_m2g']:.1f} m² g⁻¹\n"
                    f"$S_{{ext}}$ = {res['S_external_m2g']:.1f} m² g⁻¹\n"
                    f"$S_{{micro}}$ = {res['S_micro_m2g']:.1f} m² g⁻¹\n"

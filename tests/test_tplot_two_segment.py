@@ -17,6 +17,7 @@ from tplot_analysis import (
     N2_TPLOT_SLOPE_FACTOR,
     N2_STP_TO_LIQUID,
     TPlotAnalyser,
+    fit_tplot_model,
     fit_two_segment,
     harkins_jura_t,
 )
@@ -33,21 +34,23 @@ def _grid(t_min=3.5, t_max=6.5, n=20):
 
 
 def test_nonporous_single_line_recovers_no_microporosity():
-    # A straight line through the origin -> non-porous: no bend, V_micro ~ 0,
-    # external ~= total.
+    # A straight line through the origin -> non-porous: no bend, V_micro = 0,
+    # external == total.
     slope = 5.0
     t = _grid()
     v = slope * t
 
-    with pytest.warns(UserWarning):
-        r = fit_two_segment(t, v, 3.5, 6.5)
+    r = fit_tplot_model(t, v, 3.5, 6.5)
 
-    assert r["V_micro_cm3g"] == pytest.approx(0.0, abs=1e-4)
-    assert r["S_external_m2g"] == pytest.approx(r["S_total_m2g"], rel=0.01)
+    assert r["model"] == "single_line"
+    assert r["bend_detected"] is False
     assert r["S_total_m2g"] == pytest.approx(slope * N2_TPLOT_SLOPE_FACTOR, rel=0.01)
-    # No steeper micropore-filling segment -> flagged, not silently forced.
-    assert r["flags"]["slope_order_ok"] is False
-    assert r["low_confidence"] is True
+    assert r["S_external_m2g"] == pytest.approx(r["S_total_m2g"], rel=0.01)
+    assert r["S_micro_m2g"] == 0.0
+    assert r["V_micro_cm3g"] == 0.0
+    assert r["2t_nm"] is None
+    # No steeper micropore-filling segment -> no bend is reported at all.
+    assert r["no_bend_reason"]
 
 
 def test_microporous_two_segment_recovers_quantities():
@@ -78,21 +81,20 @@ def test_microporous_two_segment_recovers_quantities():
     assert r["flags"]["bend_ok"] is True
 
 
-def test_convex_isotherm_flags_slope_intercept_and_area():
-    # Convex (upward-curving) t-plot: line 1 is *less* steep than line 2, the
-    # line-2 intercept is negative, and the external area exceeds the total.
+def test_convex_isotherm_rejects_two_segment_and_falls_back():
+    # Convex (upward-curving) t-plot: line 1 is *less* steep than line 2, so no
+    # physically valid two-segment decomposition exists. The low-level fit
+    # returns None and the model falls back to a single line — S_external >
+    # S_total is never reported.
     t = _grid()
     v = (t ** 2) / 12.0
 
-    with pytest.warns(UserWarning):
-        r = fit_two_segment(t, v, 3.5, 6.5)
+    assert fit_two_segment(t, v, 3.5, 6.5) is None
 
-    assert r["flags"]["slope_order_ok"] is False
-    assert r["flags"]["intercept_ok"] is False
-    assert r["flags"]["s_order_ok"] is False
-    assert "slope_1 <= slope_2" in r["warnings"]
-    assert "intercept_2 < 0" in r["warnings"]
-    assert "S_external > S_total" in r["warnings"]
+    r = fit_tplot_model(t, v, 3.5, 6.5)
+    assert r["model"] == "single_line"
+    assert r["bend_detected"] is False
+    assert r["S_external_m2g"] == pytest.approx(r["S_total_m2g"], rel=0.01)
 
 
 def test_small_bend_flags_unreliable_diameter():

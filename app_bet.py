@@ -1077,8 +1077,7 @@ with tab_tplot:
                     f"({res['S_BET_m2g']:.2f} m² g⁻¹) by {over_pct:.1f}%. "
                     "This is within the combined BET + t-plot uncertainty — "
                     "interpret as **no detectable microporosity**, not as a precise "
-                    "decomposition. (The Harkins–Jura reference curve can "
-                    "overestimate film thickness on polar surfaces.)"
+                    "decomposition."
                 )
 
             col_t1, col_t2 = st.columns([1, 2])
