@@ -228,6 +228,11 @@ def _fig_to_bytes(fig) -> bytes:
     return buf.read()
 
 
+def _fmt(v, spec: str) -> str:
+    """Format a value, or an em-dash when it is absent (None)."""
+    return "—" if v is None else f"{v:{spec}}"
+
+
 def _plot_isotherm(ads, des, iso_cls, hyst_cls) -> plt.Figure:
     """Draw the N₂ adsorption–desorption isotherm as a standalone figure."""
     setup_plot_style()
@@ -467,7 +472,19 @@ with st.spinner("Reading file…"):
         file_bytes = uploaded.read()
         ext = Path(uploaded.name).suffix.lower()
         if ext == ".csv":
-            data = _parse_csv_template(file_bytes)
+            # Distinguish the sectioned "Manual CSV" template from a plain
+            # two-column isotherm CSV.
+            first = ""
+            for line in file_bytes.decode("utf-8-sig", errors="ignore").splitlines():
+                if line.strip():
+                    first = line.strip()
+                    break
+            if first.startswith("[") and "]" in first:
+                data = _parse_csv_template(file_bytes)
+            else:
+                tmp = Path(f"/tmp/{uploaded.name}")
+                tmp.write_bytes(file_bytes)
+                data = read_bet_xls(str(tmp))
         else:
             tmp = Path(f"/tmp/{uploaded.name}")
             tmp.write_bytes(file_bytes)
@@ -498,12 +515,18 @@ instrument_window = None
 if use_rouquerol:
     with st.spinner("Running Rouquerol range selection…"):
         rouquerol_result = select_bet_range(p_ads, n_ads)
-        try:
-            instrument_window = _match_instrument_window_by_pressure(
-                p_ads, n_ads, data["bet_pts"], s["start_pt"], s["end_pt"]
-            )
-        except Exception:
+        if s.get("window_derived"):
+            # No instrument window exists for a plain isotherm; the derived
+            # default window is not an instrument value, so the instrument-vs-
+            # Rouquerol comparison is declined.
             instrument_window = None
+        else:
+            try:
+                instrument_window = _match_instrument_window_by_pressure(
+                    p_ads, n_ads, data["bet_pts"], s["start_pt"], s["end_pt"]
+                )
+            except Exception:
+                instrument_window = None
     heatmap_result = None
     if rouquerol_result is not None:
         try:
@@ -530,10 +553,10 @@ with tab_overview:
     # ─ KPI metrics row
     cols = st.columns(4)
     kpi = [
-        (f"{s['S_BET']:.2f}",   "m² g⁻¹",  "BET Surface Area"),
-        (f"{s['Vp_total']:.4f}", "cm³ g⁻¹", "Total Pore Volume"),
-        (f"{s['dp_avg']:.1f}",   "nm",       "Avg Pore Diameter"),
-        (f"{s['C']:.1f}",        "—",        "BET C Constant"),
+        (_fmt(s.get("S_BET"), ".2f"),   "m² g⁻¹",  "BET Surface Area"),
+        (_fmt(s.get("Vp_total"), ".4f"), "cm³ g⁻¹", "Total Pore Volume"),
+        (_fmt(s.get("dp_avg"), ".1f"),   "nm",       "Avg Pore Diameter"),
+        (_fmt(s.get("C"), ".1f"),        "—",        "BET C Constant"),
     ]
     for col, (val, unit, label) in zip(cols, kpi):
         with col:
@@ -558,6 +581,9 @@ with tab_overview:
     with col_cls:
         st.markdown("**Isotherm Classification**")
         st.success(f"**{iso_cls['type']}**  \n{iso_cls['explanation']}")
+        if len(data.get("des", [])) == 0:
+            st.info("Type IV/V not evaluated — no desorption branch supplied "
+                    "(adsorption-only input).")
 
         st.markdown("**Hysteresis Classification**")
         if hyst_cls["type"] != "None":
@@ -568,6 +594,8 @@ with tab_overview:
                 f"{hyst_cls['explanation']}  \n"
                 f"Score share: {share} ({hyst_cls['score_share_pct']:.0f}% of total score)"
             )
+        elif len(data.get("des", [])) == 0:
+            st.info("Hysteresis not evaluated — no desorption branch supplied.")
         else:
             st.info("No hysteresis detected.")
 
@@ -586,15 +614,27 @@ with tab_overview:
     # ─ Summary table
     st.markdown("**Summary Table**")
     df_out = pd.DataFrame([
-        ["BET Surface Area",      f"{s['S_BET']:.3f}",         "m² g⁻¹"],
-        ["Vm (monolayer cap.)",    f"{s['Vm']:.4f}",            "cm³(STP) g⁻¹"],
-        ["BET C constant",         f"{s['C']:.2f}",             "—"],
-        ["Total Pore Volume",      f"{s['Vp_total']:.4f}",      "cm³ g⁻¹"],
-        ["Average Pore Diameter",  f"{s['dp_avg']:.3f}",        "nm"],
-        ["BJH Surface Area",       f"{s['S_BJH']:.3f}",         "m² g⁻¹"],
-        ["BJH Peak Pore Diameter", f"{s['rp_peak_BJH']*2:.2f}", "nm"],
+        ["BET Surface Area",      _fmt(s.get("S_BET"), ".3f"),         "m² g⁻¹"],
+        ["Vm (monolayer cap.)",    _fmt(s.get("Vm"), ".4f"),            "cm³(STP) g⁻¹"],
+        ["BET C constant",         _fmt(s.get("C"), ".2f"),             "—"],
+        ["Total Pore Volume",      _fmt(s.get("Vp_total"), ".4f"),      "cm³ g⁻¹"],
+        ["Average Pore Diameter",  _fmt(s.get("dp_avg"), ".3f"),        "nm"],
+        ["BJH Surface Area",       _fmt(s.get("S_BJH"), ".3f"),         "m² g⁻¹"],
+        ["BJH Peak Pore Diameter", _fmt(None if s.get("rp_peak_BJH") is None else s["rp_peak_BJH"] * 2, ".2f"), "nm"],
     ], columns=["Parameter", "Value", "Unit"])
     st.dataframe(df_out, use_container_width=True, hide_index=True)
+
+    # ─ Declined / derived notes (plain-isotherm input) ──────────────
+    if s.get("window_derived"):
+        st.caption("BET point window derived from the data (0.05 ≤ p/p₀ ≤ 0.35), "
+                   "not read from an instrument.")
+    declined = []
+    for label, reason in (s.get("declined") or {}).items():
+        declined.append(f"{label} ({reason})")
+    if s.get("Vp_total_reason"):
+        declined.append(f"total pore volume (Gurvich) — {s['Vp_total_reason']}")
+    if declined:
+        st.info("**Not available (declined):** " + "; ".join(declined))
 
     tag = (
         '<span class="tag-valid">✓ C constant valid</span>'
@@ -661,6 +701,8 @@ with tab_bet:
         st.markdown(
             f"Points used: **{s['start_pt']}** → **{s['end_pt']}** "
             f"({s['end_pt'] - s['start_pt'] + 1} points)"
+            + (" *(window derived from the data, not read from an instrument)*"
+               if s.get("window_derived") else "")
         )
     with col_fig:
         setup_plot_style()
@@ -798,8 +840,9 @@ with tab_langmuir:
 
                 st.divider()
                 st.markdown("**Comparison with BET**")
+                sbet_label = "S_BET" if not s.get("instrument_summary", True) else "Instrument S_BET"
                 comp_rows = [
-                    ["Instrument S_BET", f"{s['S_BET']:.2f}", "—"],
+                    [sbet_label, _fmt(s.get("S_BET"), ".2f"), "—"],
                 ]
                 if use_rouquerol and rouquerol_result is not None and rouquerol_result["best"] is not None:
                     rb = rouquerol_result["best"]
@@ -946,50 +989,56 @@ with tab_rouquerol:
 with tab_bjh:
     st.subheader("BJH Pore Size Distribution")
 
-    peak_diam = s["rp_peak_BJH"] * 2.0
-    if peak_diam < BJH_NARROW_MESOPORE_NM:
-        st.warning(
-            f"⚠ BJH peak diameter {peak_diam:.1f} nm is below 10 nm — "
-            "Kelvin-equation (BJH) procedures underestimate narrow mesopore "
-            "size by ~20-30% (Thommes et al. 2015 §7.2, §9)."
-        )
-
     bjh = data["bjh"]
-    # Instrument headers verified as radius ("rp/nm") and per-radius
-    # differential ("dVp/drp"), so rp*2 = diameter and dV/dd = dV/dr / 2.
-    rp   = bjh[:, 0] * 2           # radius (nm) -> diameter (nm)
-    dVdd = bjh[:, 1] / 2.0         # dVp/drp -> dVp/ddp
-    cum_Vp = bjh[:, 2]; cum_Sap = bjh[:, 3]
 
-    setup_plot_style()
-    fig_bjh, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
+    if s.get("rp_peak_BJH") is not None:
+        peak_diam = s["rp_peak_BJH"] * 2.0
+        if peak_diam < BJH_NARROW_MESOPORE_NM:
+            st.warning(
+                f"⚠ BJH peak diameter {peak_diam:.1f} nm is below 10 nm — "
+                "Kelvin-equation (BJH) procedures underestimate narrow mesopore "
+                "size by ~20-30% (Thommes et al. 2015 §7.2, §9)."
+            )
 
-    ax1.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
-    ax1.fill_between(rp, dVdd, alpha=0.15, color=C_BJH)
-    pk = np.argmax(dVdd)
-    ax1.axvline(rp[pk], ls="--", lw=0.9, color=C_BJH, alpha=0.7)
-    ax1.text(rp[pk]+0.3, dVdd[pk]*0.9, f"{rp[pk]:.1f} nm", fontsize=8, color=C_BJH)
-    ax1.axvline(N2_CAVITATION_NM, ls=":", lw=0.8, color="0.6")
-    ax1.set_xlabel("Pore Diameter (nm)")
-    ax1.set_ylabel(r"d$V_p$/d$d_p$ (cm³ g⁻¹ nm⁻¹)")
-    ax1.set_xlim(left=0); ax1.set_ylim(bottom=0)
-    ax1.set_title("Differential PSD")
+    if len(bjh) == 0:
+        st.info("BJH pore size distribution not available — no BJH table "
+                "supplied (plain-isotherm input).")
+    else:
+        # Instrument headers verified as radius ("rp/nm") and per-radius
+        # differential ("dVp/drp"), so rp*2 = diameter and dV/dd = dV/dr / 2.
+        rp   = bjh[:, 0] * 2           # radius (nm) -> diameter (nm)
+        dVdd = bjh[:, 1] / 2.0         # dVp/drp -> dVp/ddp
+        cum_Vp = bjh[:, 2]; cum_Sap = bjh[:, 3]
 
-    ax2r = ax2.twinx()
-    ax2.plot(rp, cum_Vp,  "-",  color=C_CUM, lw=1.5, label="Vp cumul.")
-    ax2r.plot(rp, cum_Sap, "--", color=C_BJH, lw=1.5, label="Sap cumul.")
-    ax2.set_xlabel("Pore Diameter (nm)")
-    ax2.set_ylabel("Cum. Pore Volume (cm³ g⁻¹)", color=C_CUM)
-    ax2r.set_ylabel("Cum. Surface Area (m² g⁻¹)", color=C_BJH)
-    ax2.tick_params(axis="y", colors=C_CUM)
-    ax2r.tick_params(axis="y", colors=C_BJH)
-    ax2.set_xlim(left=0); ax2.set_ylim(bottom=0)
-    ax2.set_title("Cumulative Pore Volume")
-    l1, b1 = ax2.get_legend_handles_labels(); l2, b2 = ax2r.get_legend_handles_labels()
-    ax2.legend(l1+l2, b1+b2, fontsize=8, loc="lower right")
-    plt.tight_layout()
-    st.pyplot(fig_bjh, use_container_width=True)
-    plt.close(fig_bjh)
+        setup_plot_style()
+        fig_bjh, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
+
+        ax1.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
+        ax1.fill_between(rp, dVdd, alpha=0.15, color=C_BJH)
+        pk = np.argmax(dVdd)
+        ax1.axvline(rp[pk], ls="--", lw=0.9, color=C_BJH, alpha=0.7)
+        ax1.text(rp[pk]+0.3, dVdd[pk]*0.9, f"{rp[pk]:.1f} nm", fontsize=8, color=C_BJH)
+        ax1.axvline(N2_CAVITATION_NM, ls=":", lw=0.8, color="0.6")
+        ax1.set_xlabel("Pore Diameter (nm)")
+        ax1.set_ylabel(r"d$V_p$/d$d_p$ (cm³ g⁻¹ nm⁻¹)")
+        ax1.set_xlim(left=0); ax1.set_ylim(bottom=0)
+        ax1.set_title("Differential PSD")
+
+        ax2r = ax2.twinx()
+        ax2.plot(rp, cum_Vp,  "-",  color=C_CUM, lw=1.5, label="Vp cumul.")
+        ax2r.plot(rp, cum_Sap, "--", color=C_BJH, lw=1.5, label="Sap cumul.")
+        ax2.set_xlabel("Pore Diameter (nm)")
+        ax2.set_ylabel("Cum. Pore Volume (cm³ g⁻¹)", color=C_CUM)
+        ax2r.set_ylabel("Cum. Surface Area (m² g⁻¹)", color=C_BJH)
+        ax2.tick_params(axis="y", colors=C_CUM)
+        ax2r.tick_params(axis="y", colors=C_BJH)
+        ax2.set_xlim(left=0); ax2.set_ylim(bottom=0)
+        ax2.set_title("Cumulative Pore Volume")
+        l1, b1 = ax2.get_legend_handles_labels(); l2, b2 = ax2r.get_legend_handles_labels()
+        ax2.legend(l1+l2, b1+b2, fontsize=8, loc="lower right")
+        plt.tight_layout()
+        st.pyplot(fig_bjh, use_container_width=True)
+        plt.close(fig_bjh)
 
     if show_features and hyst_cls["type"] != "None":
         st.divider()
@@ -1146,15 +1195,15 @@ with tab_download:
     st.markdown("• **📋 CSV Report**")
     report_rows = [
         ["Sample",              sample_name],
-        ["S_BET (m2/g)",        f"{s['S_BET']:.3f}"],
-        ["Vm (cm3(STP)/g)",     f"{s['Vm']:.4f}"],
-        ["C constant",          f"{s['C']:.2f}"],
+        ["S_BET (m2/g)",        _fmt(s.get("S_BET"), ".3f")],
+        ["Vm (cm3(STP)/g)",     _fmt(s.get("Vm"), ".4f")],
+        ["C constant",          _fmt(s.get("C"), ".2f")],
         ["C valid",             str(bet_res["C_valid"])],
         ["R2",                  f"{bet_res['R2']:.6f}"],
-        ["Vp_total (cm3/g)",    f"{s['Vp_total']:.4f}"],
-        ["dp_avg (nm)",         f"{s['dp_avg']:.3f}"],
-        ["S_BJH (m2/g)",        f"{s['S_BJH']:.3f}"],
-        ["BJH_peak_diam (nm)",  f"{s['rp_peak_BJH']*2:.2f}"],
+        ["Vp_total (cm3/g)",    _fmt(s.get("Vp_total"), ".4f")],
+        ["dp_avg (nm)",         _fmt(s.get("dp_avg"), ".3f")],
+        ["S_BJH (m2/g)",        _fmt(s.get("S_BJH"), ".3f")],
+        ["BJH_peak_diam (nm)",  _fmt(None if s.get("rp_peak_BJH") is None else s["rp_peak_BJH"] * 2, ".2f")],
         ["Isotherm type",       iso_cls["type"]],
         ["Hysteresis type",     hyst_cls["type"]],
         ["Hysteresis score share", hyst_cls.get("score_share", "—")],

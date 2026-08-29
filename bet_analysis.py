@@ -137,16 +137,164 @@ def _load_sheets(filepath: str) -> tuple:
     return xl.sheet_names, raw
 
 
+def _fmt(value, spec: str, dash: str = "—") -> str:
+    """Format a number for a report, or a dash when the value is absent (None)."""
+    return dash if value is None else f"{value:{spec}}"
+
+
+def _read_csv_isotherm(filepath: str) -> dict:
+    """Read a plain two-column isotherm CSV into the same shape as read_bet_xls.
+
+    The file is one header row then two columns — ``relative pressure`` and
+    ``quantity adsorbed (cm3/g STP)`` — with an optional UTF-8 BOM. Only the
+    adsorption branch exists, so ``des`` and ``bjh`` are empty arrays and the
+    instrument-only ``summary`` entries are ``None`` (the derivable entries are
+    filled from the isotherm and flagged as derived, not read).
+    """
+    df = pd.read_csv(filepath, encoding="utf-8-sig")
+    cols = [str(c) for c in df.columns]
+    if len(cols) < 2:
+        raise ValueError(
+            "CSV must have two columns ('relative pressure', 'quantity "
+            f"adsorbed (cm3/g STP)'); found columns: {cols}."
+        )
+
+    # Amendment 3 — unit check: assume cm3/g STP, no silent conversion.
+    header = ", ".join(cols).lower()
+    for unit in ("mmol/g", "mg/g", "%"):
+        if unit in header:
+            raise ValueError(
+                f"Unsupported unit in CSV header: found '{unit}' (header "
+                f"{header!r}). This tool expects cm3/g STP and does not convert "
+                "automatically; convert the values and label the column "
+                "'cm3/g STP'."
+            )
+
+    p = pd.to_numeric(df.iloc[:, 0], errors="coerce").to_numpy(dtype=float)
+    v = pd.to_numeric(df.iloc[:, 1], errors="coerce").to_numpy(dtype=float)
+    n = len(p)
+
+    # Validate on read — report which check failed and how many points.
+    if n < 5:
+        raise ValueError(f"CSV isotherm needs at least 5 points; found {n}.")
+    nonfinite = (~np.isfinite(p)) | (~np.isfinite(v))
+    if nonfinite.any():
+        raise ValueError(
+            f"CSV isotherm has {int(nonfinite.sum())} non-numeric point(s)."
+        )
+    if (p <= 0).any():
+        raise ValueError(
+            f"CSV isotherm has {int((p <= 0).sum())} point(s) with relative "
+            "pressure <= 0; expected 0 < p/p0 <= 1."
+        )
+    if (p > 1).any():
+        n_gt = int((p > 1).sum())
+        extra = " Values exceed 1.5 — possibly percentages." if p.max() > 1.5 else ""
+        raise ValueError(
+            f"CSV isotherm has {n_gt} point(s) with relative pressure > 1; "
+            f"expected 0 < p/p0 <= 1.{extra}"
+        )
+    if (v < 0).any():
+        raise ValueError(
+            f"CSV isotherm has {int((v < 0).sum())} point(s) with negative "
+            "adsorbed amount."
+        )
+
+    order = np.argsort(p)
+    p = p[order]
+    v = v[order]
+    ads = np.column_stack([p, v])
+    des = np.empty((0, 2))
+
+    # BET linearisation points (p/p0 < 1, where the ordinate is finite).
+    m = p < 1.0
+    x = p[m]
+    y = x / (v[m] * (1.0 - x))
+    bet_pts = np.column_stack([x, y])
+    if len(bet_pts) < 2:
+        raise ValueError(
+            f"CSV isotherm has only {len(bet_pts)} point(s) with p/p0 < 1; "
+            "cannot build a BET plot."
+        )
+
+    # Derived default window: 0.05 <= p/p0 <= 0.35 (ISO 9277 / IUPAC classical
+    # range). Falls back to all points if the range is underpopulated.
+    in_range = (x >= 0.05) & (x <= 0.35)
+    idx = np.where(in_range)[0]
+    if len(idx) >= 2:
+        start_pt = int(idx[0])
+        end_pt = int(idx[-1])
+    else:
+        start_pt = 0
+        end_pt = len(bet_pts) - 1
+
+    # Derived S_BET / Vm / C over the derived window (same fit verify_bet runs).
+    xs = bet_pts[start_pt:end_pt + 1, 0]
+    ys = bet_pts[start_pt:end_pt + 1, 1]
+    slope, intercept, *_ = linregress(xs, ys)
+    vm = 1.0 / (slope + intercept)
+    c = 1.0 + slope / intercept
+    s_bet = vm * N2_BET_FACTOR
+
+    # Amendment 2 — Gurvich total pore volume, only if the isotherm reaches
+    # p/p0 ~ 0.99. Threshold 0.98: the Gurvich rule assumes a filled pore
+    # system near p/p0 = 1; below 0.98 the estimate is unreliable.
+    i099 = int(np.argmin(np.abs(p - 0.99)))
+    pp099 = float(p[i099])
+    if pp099 >= 0.98:
+        vp_total = float(v[i099] * N2_STP_TO_LIQUID)
+        vp_reason = ""
+    else:
+        vp_total = None
+        vp_reason = (
+            f"isotherm reaches only p/p0 = {pp099:.4f} (< 0.98); Gurvich total "
+            "pore volume needs a point near p/p0 = 0.99"
+        )
+
+    summary = {
+        "Vm": float(vm),
+        "S_BET": float(s_bet),
+        "C": float(c),
+        "Vp_total": vp_total,
+        "Vp_total_pp0": pp099,
+        "Vp_total_reason": vp_reason,
+        "dp_avg": None,
+        "rp_peak_BJH": None,
+        "S_BJH": None,
+        "Vp_BJH": None,
+        "start_pt": start_pt,
+        "end_pt": end_pt,
+        "window_derived": True,
+        "instrument_summary": False,
+        "declined": {
+            "BJH pore size distribution": "no BJH table supplied by a plain two-column isotherm",
+            "hysteresis classification": "no desorption branch supplied",
+            "instrument summary / comparison": "no instrument Summary sheet supplied",
+        },
+    }
+
+    bjh = np.empty((0, 4))
+    return dict(ads=ads, des=des, bet_pts=bet_pts, bjh=bjh, summary=summary)
+
+
 def read_bet_xls(filepath: str) -> dict:
     """
-    Parse the XLS/XLSX file produced by the BET instrument.
-    Returns a dict with keys: ads, des, bet_pts, bjh, summary
+    Parse the XLS/XLSX file produced by the BET instrument, or a plain
+    two-column isotherm CSV (relative pressure, cm³/g STP).
+
+    Returns a dict with keys: ads, des, bet_pts, bjh, summary. A CSV supplies
+    only the adsorption branch, so ``des`` and ``bjh`` are empty arrays and the
+    instrument-only ``summary`` entries are ``None`` (see ``_read_csv_isotherm``).
 
     Raises
     ------
     ValueError
-        If expected sheet names or row labels are not found in the file.
+        If expected sheet names or row labels are not found in the file, or if
+        a CSV fails read-time validation.
     """
+    if str(filepath).lower().endswith(".csv"):
+        return _read_csv_isotherm(filepath)
+
     sheet_names, raw = _load_sheets(filepath)
 
     required_sheets = {"AdsDes", "BET", "BJH", "Summary"}
@@ -837,89 +985,109 @@ def plot_all(data: dict, iso_cls: dict, hyst_cls: dict,
     # IUPAC note: adsorption BJH avoids the ~3.4 nm N₂ cavitation
     # artefact that appears in desorption BJH at 77 K (p/p₀ ≈ 0.42).
     ax = axes[2]
-    # Instrument headers verified as radius ("rp/nm") and per-radius
-    # differential ("dVp/drp"), so rp*2 = diameter and dV/dd = dV/dr / 2.
-    rp    = bjh[:, 0] * 2          # radius (nm) -> diameter (nm)
-    dVdd  = bjh[:, 1] / 2.0        # dVp/drp -> dVp/ddp
+    if len(bjh) == 0:
+        ax.text(0.5, 0.5, "BJH not available\n(no BJH table supplied)",
+                transform=ax.transAxes, ha="center", va="center",
+                fontsize=9, color="0.4")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title("Differential PSD", fontsize=10)
+        _label_panel(ax, "C")
+    else:
+        # Instrument headers verified as radius ("rp/nm") and per-radius
+        # differential ("dVp/drp"), so rp*2 = diameter and dV/dd = dV/dr / 2.
+        rp    = bjh[:, 0] * 2          # radius (nm) -> diameter (nm)
+        dVdd  = bjh[:, 1] / 2.0        # dVp/drp -> dVp/ddp
 
-    # Upper x-limit from the data, independent of the row order the instrument
-    # used (BELSORP writes large→small): sort a local copy by diameter, then find
-    # the smallest diameter where V_below(d) — the pore volume contained in pores
-    # of diameter <= d — reaches 99 % of the total.
-    order = np.argsort(rp)
-    rp_s  = rp[order]
-    cv_s  = bjh[order, 2]
-    total = float(cv_s.max())
-    # V_below rises with diameter. Ascending instruments store it directly; a
-    # descending (BELSORP) column stores the complement (volume in pores >= d),
-    # so flip it. The 99 % test below is identical in both directions.
-    if cv_s[-1] < cv_s[0]:             # accumulated from the large-diameter end
-        v_below = total - cv_s
-        decreasing = True
-    else:                              # accumulated from the small-diameter end
-        v_below = cv_s
-        decreasing = False
-    x_max = float(rp_s[-1])
-    if total > 0:
-        idx = np.where(v_below >= 0.99 * total)[0]
-        if len(idx):
-            x_max = float(rp_s[idx[0]])
-    x_max = max(x_max, 5.0)
+        # Upper x-limit from the data, independent of the row order the instrument
+        # used (BELSORP writes large→small): sort a local copy by diameter, then find
+        # the smallest diameter where V_below(d) — the pore volume contained in pores
+        # of diameter <= d — reaches 99 % of the total.
+        order = np.argsort(rp)
+        rp_s  = rp[order]
+        cv_s  = bjh[order, 2]
+        total = float(cv_s.max())
+        # V_below rises with diameter. Ascending instruments store it directly; a
+        # descending (BELSORP) column stores the complement (volume in pores >= d),
+        # so flip it. The 99 % test below is identical in both directions.
+        if cv_s[-1] < cv_s[0]:             # accumulated from the large-diameter end
+            v_below = total - cv_s
+            decreasing = True
+        else:                              # accumulated from the small-diameter end
+            v_below = cv_s
+            decreasing = False
+        x_max = float(rp_s[-1])
+        if total > 0:
+            idx = np.where(v_below >= 0.99 * total)[0]
+            if len(idx):
+                x_max = float(rp_s[idx[0]])
+        x_max = max(x_max, 5.0)
 
-    ax.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
-    ax.fill_between(rp, dVdd, alpha=0.15, color=C_BJH)
+        ax.plot(rp, dVdd, "-", color=C_BJH, lw=1.5)
+        ax.fill_between(rp, dVdd, alpha=0.15, color=C_BJH)
 
-    peak_idx = np.argmax(dVdd)
-    ax.axvline(rp[peak_idx], ls="--", lw=0.9, color=C_BJH, alpha=0.7)
-    ax.text(rp[peak_idx] + 0.5, dVdd[peak_idx] * 0.95,
-            f"{rp[peak_idx]:.1f} nm", fontsize=8, color=C_BJH)
+        peak_idx = np.argmax(dVdd)
+        ax.axvline(rp[peak_idx], ls="--", lw=0.9, color=C_BJH, alpha=0.7)
+        ax.text(rp[peak_idx] + 0.5, dVdd[peak_idx] * 0.95,
+                f"{rp[peak_idx]:.1f} nm", fontsize=8, color=C_BJH)
 
-    ax.set_xlabel(r"Pore Diameter (nm)")
-    ax.set_ylabel(r"d$V_p$/d$d_p$  (cm$^3$ g$^{-1}$ nm$^{-1}$)")
-    ax.set_xlim(left=0, right=x_max)
-    ax.set_ylim(bottom=0)
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
+        ax.set_xlabel(r"Pore Diameter (nm)")
+        ax.set_ylabel(r"d$V_p$/d$d_p$  (cm$^3$ g$^{-1}$ nm$^{-1}$)")
+        ax.set_xlim(left=0, right=x_max)
+        ax.set_ylim(bottom=0)
+        ax.xaxis.set_minor_locator(AutoMinorLocator())
+        ax.yaxis.set_minor_locator(AutoMinorLocator())
 
-    ax.axvline(N2_CAVITATION_NM, ls=":", lw=0.8, color="0.6", alpha=0.7)
-    ax.text(N2_CAVITATION_NM, ax.get_ylim()[1] * 0.9,
-            "cavitation\n(~3.4 nm)", fontsize=6.5, color="0.5",
-            va="top", ha="left")
-    _label_panel(ax, "C")
+        ax.axvline(N2_CAVITATION_NM, ls=":", lw=0.8, color="0.6", alpha=0.7)
+        ax.text(N2_CAVITATION_NM, ax.get_ylim()[1] * 0.9,
+                "cavitation\n(~3.4 nm)", fontsize=6.5, color="0.5",
+                va="top", ha="left")
+        _label_panel(ax, "C")
 
     # ── [D] Cumulative Pore Volume ────────────────────────────
     ax  = axes[3]
     ax2 = ax.twinx()
 
-    cum_Vp  = bjh[:, 2]
-    cum_Sap = bjh[:, 3]
+    if len(bjh) == 0:
+        ax.text(0.5, 0.5, "BJH not available\n(no BJH table supplied)",
+                transform=ax.transAxes, ha="center", va="center",
+                fontsize=9, color="0.4")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax2.set_yticks([])
+        ax.set_title("Cumulative Pore Volume", fontsize=10)
+        _label_panel(ax, "D")
+    else:
+        cum_Vp  = bjh[:, 2]
+        cum_Sap = bjh[:, 3]
 
-    ax.plot(rp, cum_Vp, "-", color=C_CUM, lw=1.5,
-            label=r"$V_p$ cumulative")
-    ax2.plot(rp, cum_Sap, "--", color=C_BJH, lw=1.5,
-             label=r"$S_{ap}$ cumulative")
+        ax.plot(rp, cum_Vp, "-", color=C_CUM, lw=1.5,
+                label=r"$V_p$ cumulative")
+        ax2.plot(rp, cum_Sap, "--", color=C_BJH, lw=1.5,
+                 label=r"$S_{ap}$ cumulative")
 
-    ax2.axhline(s["S_BET"], ls=":", lw=1.0, color=C_BET,
-                label=f"$S_{{BET}}$ = {s['S_BET']:.1f} m² g⁻¹")
-    ax2.axhline(s["S_BJH"], ls=":", lw=1.0, color=C_BJH,
-                label=f"$S_{{BJH}}$ = {s['S_BJH']:.1f} m² g⁻¹")
+        ax2.axhline(s["S_BET"], ls=":", lw=1.0, color=C_BET,
+                    label=f"$S_{{BET}}$ = {s['S_BET']:.1f} m² g⁻¹")
+        if s.get("S_BJH") is not None:
+            ax2.axhline(s["S_BJH"], ls=":", lw=1.0, color=C_BJH,
+                        label=f"$S_{{BJH}}$ = {s['S_BJH']:.1f} m² g⁻¹")
 
-    ax.set_xlabel(r"Pore Diameter (nm)")
-    vp_dir = " (from large d)" if decreasing else ""
-    ax.set_ylabel(r"Cum. Pore Volume" + vp_dir + r" (cm$^3$ g$^{-1}$)",
-                  color=C_CUM)
-    ax2.set_ylabel(r"Cum. Surface Area" + vp_dir + r" (m$^2$ g$^{-1}$)",
-                   color=C_BJH)
-    ax.tick_params(axis="y", colors=C_CUM)
-    ax2.tick_params(axis="y", colors=C_BJH)
-    ax.set_xlim(left=0, right=x_max)
-    ax.set_ylim(bottom=0)
+        ax.set_xlabel(r"Pore Diameter (nm)")
+        vp_dir = " (from large d)" if decreasing else ""
+        ax.set_ylabel(r"Cum. Pore Volume" + vp_dir + r" (cm$^3$ g$^{-1}$)",
+                      color=C_CUM)
+        ax2.set_ylabel(r"Cum. Surface Area" + vp_dir + r" (m$^2$ g$^{-1}$)",
+                       color=C_BJH)
+        ax.tick_params(axis="y", colors=C_CUM)
+        ax2.tick_params(axis="y", colors=C_BJH)
+        ax.set_xlim(left=0, right=x_max)
+        ax.set_ylim(bottom=0)
 
-    lines1, lbl1 = ax.get_legend_handles_labels()
-    lines2, lbl2 = ax2.get_legend_handles_labels()
-    ax.legend(lines1 + lines2, lbl1 + lbl2,
-              fontsize=7.5, loc="lower right")
-    _label_panel(ax, "D")
+        lines1, lbl1 = ax.get_legend_handles_labels()
+        lines2, lbl2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, lbl1 + lbl2,
+                  fontsize=7.5, loc="lower right")
+        _label_panel(ax, "D")
 
     fig.suptitle(f"BET/BJH Analysis — {sample_name}",
                  fontsize=12, y=1.01, fontweight="bold")
@@ -958,7 +1126,7 @@ def validity_warnings(s: dict, iso_cls: dict) -> list:
     iso_type = iso_cls.get("type", "")
 
     # §5.1.1 — BET C constant and Point B.
-    if np.isfinite(C):
+    if C is not None and np.isfinite(C):
         if C < BET_C_NOT_APPLICABLE:
             notes.append("BET C < 2 — the isotherm is Type III/V and the BET "
                          "method is not applicable (Thommes et al. 2015 §5.1.1).")
@@ -978,7 +1146,7 @@ def validity_warnings(s: dict, iso_cls: dict) -> list:
 
     # §7.2 / §9 — BJH underestimates narrow mesopores.
     rp_peak = s.get("rp_peak_BJH", np.nan)
-    if np.isfinite(rp_peak):
+    if rp_peak is not None and np.isfinite(rp_peak):
         peak_diam = rp_peak * 2.0
         if peak_diam < BJH_NARROW_MESOPORE_NM:
             notes.append(f"BJH peak diameter {peak_diam:.1f} nm is below 10 nm — "
@@ -1006,16 +1174,36 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
     print(sep)
 
     rows = [
-        ["BET Surface Area",    f"{s['S_BET']:.3f}",  "m² g⁻¹"],
-        ["Vm (monolayer cap.)",  f"{s['Vm']:.4f}",     "cm³(STP) g⁻¹"],
-        ["BET C constant",       f"{s['C']:.2f}",      "—"],
-        ["Total Pore Volume",    f"{s['Vp_total']:.4f}","cm³ g⁻¹"],
-        ["Average Pore Diameter",f"{s['dp_avg']:.3f}",  "nm"],
-        ["BJH Surface Area",     f"{s['S_BJH']:.3f}",  "m² g⁻¹"],
-        ["BJH Peak Diameter",    f"{s['rp_peak_BJH']*2:.2f}", "nm"],
+        ["BET Surface Area",    _fmt(s.get("S_BET"), ".3f"),  "m² g⁻¹"],
+        ["Vm (monolayer cap.)",  _fmt(s.get("Vm"), ".4f"),     "cm³(STP) g⁻¹"],
+        ["BET C constant",       _fmt(s.get("C"), ".2f"),      "—"],
+        ["Total Pore Volume",    _fmt(s.get("Vp_total"), ".4f"), "cm³ g⁻¹"],
+        ["Average Pore Diameter", _fmt(s.get("dp_avg"), ".3f"),  "nm"],
+        ["BJH Surface Area",     _fmt(s.get("S_BJH"), ".3f"),  "m² g⁻¹"],
+        ["BJH Peak Diameter",    _fmt(None if s.get("rp_peak_BJH") is None else s["rp_peak_BJH"] * 2, ".2f"), "nm"],
     ]
     print(tabulate(rows, headers=["Parameter", "Value", "Unit"],
                    tablefmt="simple"))
+
+    # ── Declined quantities (sentinel None, not a fake zero) ──
+    declined = []
+    if not s.get("instrument_summary", True):
+        declined.append(
+            "instrument summary values — not available for a plain isotherm "
+            "(S_BET/Vm/C shown above are derived from the isotherm)"
+        )
+    if s.get("Vp_total_reason"):
+        declined.append(f"total pore volume (Gurvich) — {s['Vp_total_reason']}")
+    for label, reason in (s.get("declined") or {}).items():
+        declined.append(f"{label} — {reason}")
+    if declined:
+        print("\n  Not available (declined)")
+        for d in declined:
+            print(f"    · {d}")
+
+    if s.get("window_derived"):
+        print("\n  Note: the BET point window was derived from the data "
+              "(0.05 ≤ p/p₀ ≤ 0.35), not read from an instrument.")
 
     if not bet_res["C_valid"]:
         print("\n  ⚠  WARNING: BET C constant is NEGATIVE.")
@@ -1028,7 +1216,8 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
         for n in notes:
             print(f"    ⚠  {n}")
 
-    print(f"\n  BET Regression  (points {s['start_pt']}–{s['end_pt']})")
+    window_note = " (derived)" if s.get("window_derived") else ""
+    print(f"\n  BET Regression  (points {s['start_pt']}–{s['end_pt']}{window_note})")
     print(f"    Slope     : {bet_res['slope']:.6f}")
     print(f"    Intercept : {bet_res['intercept']:.6f}")
     print(f"    R²        : {bet_res['R2']:.6f}")
@@ -1042,6 +1231,9 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
     print(f"\n  Isotherm Classification")
     print(f"    Type        : {iso_cls['type']}")
     print(f"    Explanation : {iso_cls['explanation']}")
+    if len(data.get("des", [])) == 0:
+        print(f"    Note        : Type IV/V not evaluated — no desorption branch "
+              "supplied (adsorption-only input).")
 
     if h["type"] != "None":
         print(f"\n  Hysteresis Classification")
@@ -1056,6 +1248,9 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
         feat_rows = [[k, str(v)] for k, v in h["features"].items()]
         print(tabulate(feat_rows, headers=["Feature", "Value"],
                        tablefmt="simple"))
+    elif len(data.get("des", [])) == 0:
+        print(f"\n  Hysteresis Classification")
+        print(f"    Not evaluated — no desorption branch supplied (adsorption-only input).")
 
     no_condensation_types = ("Type I(a)", "Type I(b)", "Type II", "Type III",
                              "Type VI")
@@ -1065,17 +1260,21 @@ def print_report(data: dict, iso_cls: dict, hyst_cls: dict,
               "loop sits on a Type II adsorption branch by definition "
               "(Thommes et al. 2015 §4.3.2).")
 
-    ratio = s["S_BET"] / s["S_BJH"] if s["S_BJH"] else float("nan")
-    print(f"\n  BET vs BJH Comparison")
-    print(f"    S_BET  : {s['S_BET']:.2f} m² g⁻¹")
-    print(f"    S_BJH  : {s['S_BJH']:.2f} m² g⁻¹  (adsorption branch)")
-    print(f"    Ratio  : {ratio:.3f}")
-    if ratio > 1.15:
-        print("    Note   : S_BET > S_BJH — micropore contribution likely.")
-    elif ratio < 0.85:
-        print("    Note   : S_BJH > S_BET — check BJH model assumptions.")
+    if s.get("S_BJH") is None:
+        print(f"\n  BET vs BJH Comparison")
+        print(f"    Not evaluated — no BJH data supplied.")
     else:
-        print("    Note   : Good agreement between BET and BJH methods.")
+        ratio = s["S_BET"] / s["S_BJH"] if s["S_BJH"] else float("nan")
+        print(f"\n  BET vs BJH Comparison")
+        print(f"    S_BET  : {s['S_BET']:.2f} m² g⁻¹")
+        print(f"    S_BJH  : {s['S_BJH']:.2f} m² g⁻¹  (adsorption branch)")
+        print(f"    Ratio  : {ratio:.3f}")
+        if ratio > 1.15:
+            print("    Note   : S_BET > S_BJH — micropore contribution likely.")
+        elif ratio < 0.85:
+            print("    Note   : S_BJH > S_BET — check BJH model assumptions.")
+        else:
+            print("    Note   : Good agreement between BET and BJH methods.")
     print(f"\n{sep}\n")
 
 

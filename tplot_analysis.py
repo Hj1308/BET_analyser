@@ -810,10 +810,27 @@ class TPlotAnalyser:
         V_meso+macro = V_total - V_micro.  V_macro is not separated because it
         needs Hg porosimetry; the "meso" bucket below is really meso + macro.
 
+        When the total pore volume is unavailable (``self.vtot`` is None — e.g.
+        a plain isotherm that does not reach p/p0 ≈ 0.99), the meso/macro and
+        total volumes are declined (None) rather than computed from a fake
+        total.
+
         Returns
         -------
         dict with volumes (cm³/g) and % for micropore and meso+macro.
         """
+        if self.vtot is None:
+            return {
+                "V_micro_cm3g": round(v_micro, 5),
+                "V_meso_cm3g": None,
+                "V_total_cm3g": None,
+                "Micropore_%": None,
+                "Meso_Macro_%": None,
+                "V_total_reason": (
+                    "total pore volume unavailable (isotherm does not reach "
+                    "p/p0 ≈ 0.99, so the Gurvich total could not be derived)"
+                ),
+            }
         v_meso = max(self.vtot - v_micro, 0.0)
         total = v_micro + v_meso
         if total <= 0:
@@ -880,10 +897,14 @@ class TPlotAnalyser:
         print(f"")
         if res["V_micro_cm3g"] is not None:
             print(f"  Pore Volumes")
-            print(f"    V_total      : {res['V_total_cm3g']:.5f}  cm³ g⁻¹")
-            print(f"    V_micro      : {res['V_micro_cm3g']:.5f}  cm³ g⁻¹   ({res['Micropore_%']}%)")
-            print(f"    V_meso+macro : {res['V_meso_cm3g']:.5f}  cm³ g⁻¹   ({res['Meso_Macro_%']}%)")
-            print(f"      ↳ V_macro needs Hg porosimetry")
+            if res["V_meso_cm3g"] is None:
+                print(f"    V_micro      : {res['V_micro_cm3g']:.5f}  cm³ g⁻¹")
+                print(f"    V_meso+macro : not reported ({res.get('V_total_reason', 'total pore volume unavailable')})")
+            else:
+                print(f"    V_total      : {res['V_total_cm3g']:.5f}  cm³ g⁻¹")
+                print(f"    V_micro      : {res['V_micro_cm3g']:.5f}  cm³ g⁻¹   ({res['Micropore_%']}%)")
+                print(f"    V_meso+macro : {res['V_meso_cm3g']:.5f}  cm³ g⁻¹   ({res['Meso_Macro_%']}%)")
+                print(f"      ↳ V_macro needs Hg porosimetry")
         else:
             print(f"  Pore Volumes   : not reported (micropore volume undetermined)")
         print(f"")
