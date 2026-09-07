@@ -1,6 +1,9 @@
 """Unit tests for Rouquerol BET range selection."""
 
+import os
+
 import numpy as np
+import pandas as pd
 import pytest
 
 from rouquerol import (
@@ -94,8 +97,9 @@ def test_noisy_type_iv_isotherm_recovers_surface_area():
 def test_bet_uncertainty_propagation():
     """σ(S_BET) and σ(C) come from the linregress standard errors via
     first-order propagation: ~0 for a perfect fit, positive for noisy
-    data, reproducing σ_S = S_BET·√(σ_slope² + σ_intercept²)/(slope+intercept),
-    and bracketing the true surface area."""
+    data, reproducing σ_S = S_BET·√Var(d)/d with
+    Var(d) = σ_slope² + σ_intercept² + 2·Cov(slope, intercept),
+    Cov(slope, intercept) = −x̄·σ_slope², and bracketing the true surface area."""
     p, n, C, Vm = _ideal_bet_isotherm()
     fit = fit_bet_window(p, n)
     assert fit["sigma_S_BET"] == pytest.approx(0.0, abs=1e-9)
@@ -105,8 +109,9 @@ def test_bet_uncertainty_propagation():
     n_noisy = n * (1.0 + rng.normal(0.0, 0.005, size=len(p)))
     fit = fit_bet_window(p, n_noisy)
     assert fit["sigma_slope"] > 0 and fit["sigma_intercept"] > 0
-    expected = (abs(fit["S_BET"])
-                * np.hypot(fit["sigma_slope"], fit["sigma_intercept"])
+    var_denom = (fit["sigma_slope"] ** 2 + fit["sigma_intercept"] ** 2
+                 + 2.0 * fit["cov_slope_intercept"])
+    expected = (abs(fit["S_BET"]) * np.sqrt(var_denom)
                 / abs(fit["slope"] + fit["intercept"]))
     assert fit["sigma_S_BET"] == pytest.approx(expected, rel=1e-12)
     assert fit["sigma_C"] > 0
@@ -129,3 +134,46 @@ def test_bet_sensitivity_heatmap_dimensions_and_stability():
     for i in range(N):
         for j in range(i):
             assert np.isnan(result["s_bet"][i, j])
+
+
+def test_betsi_s_bet_unchanged_with_covariance():
+    """Regression guard: adding the slope–intercept covariance must not move
+    the fitted values. best.S_BET on the bundled BETSI isotherms must match
+    the pre-covariance references to 3 decimal places."""
+    examples = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), os.pardir, "examples")
+    references = {
+        "betsi_HKUST-1.csv": 1554.7766,
+        "betsi_Zeolite-13X.csv": 841.9653,
+    }
+    for filename, expected in references.items():
+        df = pd.read_csv(os.path.join(examples, filename), encoding="utf-8-sig")
+        p = df.iloc[:, 0].to_numpy(dtype=float)
+        n = df.iloc[:, 1].to_numpy(dtype=float)
+        best = select_bet_range(p, n)["best"]
+        assert best is not None, f"{filename}: no Rouquerol window was found"
+        assert best.S_BET == pytest.approx(expected, abs=1e-3), (
+            f"{filename}: best.S_BET = {best.S_BET:.4f}, expected {expected:.4f}"
+        )
+
+
+def test_cov_slope_intercept_is_negative():
+    """Cov(slope, intercept) = −x̄·Var(slope): strictly negative on a noisy
+    window with all p_rel in (0,1), since x̄ > 0 and Var(slope) > 0."""
+    p, n, _, _ = _ideal_bet_isotherm()
+    assert np.all((p > 0) & (p < 1))
+    rng = np.random.default_rng(7)
+    n_noisy = n * (1.0 + rng.normal(0.0, 0.005, size=len(p)))
+    fit = fit_bet_window(p, n_noisy)
+    assert fit["sigma_slope"] > 0
+    assert fit["cov_slope_intercept"] < 0
+
+
+def test_cov_slope_intercept_matches_ols_identity():
+    """OLS with an intercept: Cov(slope, intercept) == −mean(p)·σ_slope²."""
+    p, n, _, _ = _ideal_bet_isotherm()
+    rng = np.random.default_rng(7)
+    n_noisy = n * (1.0 + rng.normal(0.0, 0.005, size=len(p)))
+    fit = fit_bet_window(p, n_noisy)
+    assert fit["cov_slope_intercept"] == pytest.approx(
+        -np.mean(p) * fit["sigma_slope"] ** 2)

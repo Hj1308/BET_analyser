@@ -85,13 +85,15 @@ def fit_bet_window(p_rel: np.ndarray, n: np.ndarray) -> dict:
     scipy.stats.linregress returns the standard errors of the slope
     (stderr) and intercept (intercept_stderr) directly. First-order
     error propagation through Vm = 1/(slope + intercept) and
-    C = 1 + slope/intercept then gives
+    C = 1 + slope/intercept then gives, with d = m + b,
 
-        σ(S_BET) = S_BET · √(σ_slope² + σ_intercept²) / (slope + intercept)
-        σ(C)     = √(σ_slope²/intercept² + σ_intercept²·slope²/intercept⁴)
+        Var(d)   = Var(m) + Var(b) + 2·Cov(m, b)
+        σ(S_BET) = S_BET · √Var(d) / d
+        σ(C)     = √(σ_slope²/intercept² + σ_intercept²·slope²/intercept⁴
+                     − 2·slope·Cov(m, b)/intercept³)
 
-    The slope–intercept covariance is neglected; against a Monte-Carlo
-    check this changes σ(S_BET) by only ~5 %.
+    The slope–intercept covariance is included: for OLS with an
+    intercept, Cov(m, b) = −x̄ · Var(m), with x̄ = mean(p_rel).
     """
     p_rel = np.asarray(p_rel, dtype=float)
     n = np.asarray(n, dtype=float)
@@ -102,18 +104,23 @@ def fit_bet_window(p_rel: np.ndarray, n: np.ndarray) -> dict:
     slope, intercept, r = reg.slope, reg.intercept, reg.rvalue
     sigma_slope = float(reg.stderr)
     sigma_intercept = float(reg.intercept_stderr)
+    cov_slope_intercept = float(-np.mean(p_rel) * sigma_slope ** 2)
+    var_denom = sigma_slope ** 2 + sigma_intercept ** 2 + 2.0 * cov_slope_intercept
+    var_denom = max(var_denom, 0.0)  # clamp guards floating-point noise only
     denom = slope + intercept
     Vm = np.nan if abs(denom) < 1e-30 else 1.0 / denom
     C = np.nan if abs(intercept) < 1e-30 else 1.0 + slope / intercept
     S_BET = Vm * N2_BET_FACTOR if np.isfinite(Vm) else np.nan
     if np.isfinite(Vm):
-        sigma_Vm = abs(Vm) * np.hypot(sigma_slope, sigma_intercept) / abs(denom)
-        sigma_S_BET = abs(S_BET) * np.hypot(sigma_slope, sigma_intercept) / abs(denom)
+        sigma_Vm = abs(Vm) * np.sqrt(var_denom) / abs(denom)
+        sigma_S_BET = abs(S_BET) * np.sqrt(var_denom) / abs(denom)
     else:
         sigma_Vm = sigma_S_BET = np.nan
     if np.isfinite(C):
-        sigma_C = np.hypot(sigma_slope / intercept,
-                           sigma_intercept * slope / intercept ** 2)
+        var_C = ((sigma_slope / intercept) ** 2
+                 + (sigma_intercept * slope / intercept ** 2) ** 2
+                 - 2.0 * slope * cov_slope_intercept / intercept ** 3)
+        sigma_C = np.sqrt(max(var_C, 0.0))  # clamp guards floating-point noise only
     else:
         sigma_C = np.nan
     return {
@@ -129,6 +136,7 @@ def fit_bet_window(p_rel: np.ndarray, n: np.ndarray) -> dict:
         "y": y,
         "S_BET": float(S_BET) if np.isfinite(S_BET) else np.nan,
         "sigma_S_BET": float(sigma_S_BET),
+        "cov_slope_intercept": cov_slope_intercept,
     }
 
 
@@ -179,6 +187,7 @@ class RouquerolWindow:
     sigma_Vm: float
     sigma_C: float
     sigma_S_BET: float
+    cov_slope_intercept: float
     pm_exp: float
     pm_theory: float
     c1_C_positive: bool
@@ -206,6 +215,7 @@ class RouquerolWindow:
             "sigma_Vm": self.sigma_Vm,
             "sigma_C": self.sigma_C,
             "sigma_S_BET": self.sigma_S_BET,
+            "cov_slope_intercept": self.cov_slope_intercept,
             "pm_exp": self.pm_exp,
             "pm_theory": self.pm_theory,
             "c1_C_positive": self.c1_C_positive,
@@ -269,6 +279,7 @@ def evaluate_window(
         sigma_Vm=fit["sigma_Vm"],
         sigma_C=fit["sigma_C"],
         sigma_S_BET=fit["sigma_S_BET"],
+        cov_slope_intercept=fit["cov_slope_intercept"],
         pm_exp=pm_exp,
         pm_theory=pm_th,
         c1_C_positive=c1,
